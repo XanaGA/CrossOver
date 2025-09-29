@@ -46,8 +46,8 @@ File structure below:
 ## :wrench: Data Preprocessing
 In order to process data faster during training + inference, we preprocess 1D (referral), 2D (RGB + floorplan) & 3D (Point Cloud + CAD) for both object instances and scenes. Note that, since for 3RScan dataset, they do not provide frame-wise RGB segmentations, we project the 3D data to 2D and store it in `.npz` format for every scan. We provide the scripts for projection. Here's an overview which data features are precomputed:
 
-- Object Instance: Referral, Multi-view RGB images, Point Cloud & CAD (only for ScanNet)
-- Scene: Referral, Multi-view RGB images, Floorplan (only for ScanNet) Point Cloud 
+- Object Instance: Referral, Multi-view RGB images, Point Cloud, & CAD (only for ScanNet)
+- Scene: Referral, Multi-view RGB images, Floorplan (only for ScanNet), & Point Cloud 
 
 We provide the preprocessing scripts which should be easily cusotmizable for new datasets. Further instructions below.
 

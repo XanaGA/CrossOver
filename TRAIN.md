@@ -55,7 +55,31 @@ We provide all available checkpoints on huggingface 👉 [here](https://huggingf
 
 
 # :shield: Single Inference
-We release script to perform inference (generate scene-level embeddings) on a single scan of 3RScan/Scannet. Detailed usage in the file. Quick instructions below:
+
+## Instance Inference
+We provide script to perform instance-level cross-modal retrieval inference on a single scan, and report retrieval metrics and matched objects within the scene, across all available modality pairs. Detailed usage in the file. Quick instructions below:
+
+```bash
+$ python single_inference/instance_inference.py
+```
+
+Various configurable parameters:
+
+- `--dataset`: Dataset name - Options: `scannet`, `scan3r`, `arkitscenes`, `multiscan`
+- `--process_dir`: Path to processed features directory containing preprocessed object data 
+- `--ckpt`: Path to the pre-trained instance crossover model checkpoint (details [here](TRAIN.md#checkpoint-inventory)), example_path: `./checkpoints/instance_crossover_scannet+scan3r+multiscan+arkitscenes.pth`
+- `--scan_id`: Scan ID to run inference on (e.g., `scene_00004_00`)
+- `--modalities`: List of modalities to use (default: `['rgb', 'point', 'cad', 'referral']`)
+- `--input_dim_3d`: Input dimension for 3D features (default: 384)
+- `--input_dim_2d`: Input dimension for 2D features (default: 1536)
+- `--input_dim_1d`: Input dimension for 1D features (default: 768)
+- `--out_dim`: Output embedding dimension (default: 768)
+
+
+> **Note**: This script requires preprocessed object data for the target scene, namely `objectsDataMultimodal.npz` files generated during data preprocessing as described in [DATA.md](DATA.md/#wrench-data-preprocessing). The scan must have valid object instances across the specified modalities.
+
+## Scene Inference
+We release a script to perform inference (generate scene-level embeddings) on a single scan of all supported datasets. Detailed usage in the file. Quick instructions below:
 
 ```bash
 $ python single_inference/scene_inference.py
@@ -65,11 +89,12 @@ Various configurable parameters:
 
 - `--dataset`: dataset name, Scannet/Scan3R
 - `--data_dir`: data directory (eg: `./datasets/Scannet`, assumes similar structure as in `preprocess.md`).
-- `--floorplan_dir`: directory consisting of the rasterized floorplans (this can point to the downloaded preprocessed directory), only for Scannet
-- `--ckpt`: Path to the pre-trained scene crossover model checkpoint (details [here](TRAIN.md#checkpoint-inventory)), example_path: `./checkpoints/scene_crossover_scannet+scan3r.pth/`).
+- `--process_dir`: preprocessed data directory (this can point to the downloaded preprocessed directory)
+- `--ckpt`: Path to the pre-trained scene crossover model checkpoint (details [here](TRAIN.md#checkpoint-inventory)), example_path: (`./checkpoints/scene_crossover_scannet+scan3r.pth/`).
 - `--scan_id`: the scan id from the dataset you'd like to calculate embeddings for (if not provided, embeddings for all scans are calculated).
 
 The script will output embeddings in the same format as provided [here](DATA.md/#generated-embedding-data).
+
 
 # :bar_chart: Evaluation
 #### Cross-Modal Object Retrieval

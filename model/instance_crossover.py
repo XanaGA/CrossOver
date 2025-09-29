@@ -38,7 +38,6 @@ class InstanceCrossOverModel(nn.Module):
             ModalityType.CAD: PointTokenizeEncoder(use_attn=False, hidden_size=self.feat_dims[ModalityType.CAD])
         })
         
-        # self.encoder2D = DinoV2('dinov2_vitg14', self.device).feature_extractor
         self.encoder2D = build_module("2D", 'DinoV2', 
                                  ckpt =  'dinov2_vitg14', device = self.device)
         
@@ -66,19 +65,10 @@ class InstanceCrossOverModel(nn.Module):
     def encode_point_objects(self, obj_points, obj_masks: torch.Tensor) -> torch.Tensor:
         """Encode raw point cloud data for objects - matches preprocessing approach"""
         
-        # obj_points is now a list of raw point clouds (like preprocessing)
-        # batch_size is always 1 for single-scan datasets
-        if isinstance(obj_points, list):
-            # Single batch case - obj_points is list of point clouds
-            point_clouds_batch = obj_points
-            batch_size = 1
-            num_objects = len(point_clouds_batch)
-        else:
-            # Legacy tensor format (if still used elsewhere)
-            batch_size, num_objects, num_points, _ = obj_points.shape
-            point_clouds_batch = [obj_points[0, o].cpu().numpy() for o in range(num_objects)]
+        point_clouds_batch = obj_points
+        num_objects = len(point_clouds_batch)
+    
         
-        # Extract features for each object using I2PMAE (like preprocessing)
         object_features = []
         object_locations = []
         
@@ -95,10 +85,10 @@ class InstanceCrossOverModel(nn.Module):
                     obj_feat = self.point_feature_extractor(points_pt) 
                 
                 object_features.append(obj_feat.squeeze(0))
-                object_locations.append(object_loc)  # Use all 6 elements: [center_x, center_y, center_z, size_x, size_y, size_z]
+                object_locations.append(object_loc)  
             else:
                 object_features.append(torch.zeros(self.feat_dims[ModalityType.POINT]).to(self.device))
-                object_locations.append(np.zeros(6))  # Zero location with 6 elements 
+                object_locations.append(np.zeros(6))   
         
         point_features = torch.stack(object_features).unsqueeze(0)  # (1, num_objects, feat_dim)
         
@@ -111,51 +101,38 @@ class InstanceCrossOverModel(nn.Module):
     
     def encode_cad_objects(self, obj_points, obj_masks: torch.Tensor) -> torch.Tensor:
         """Encode raw CAD point cloud data for objects - matches preprocessing approach"""
-        
-        # obj_points is now a list of raw CAD point clouds (like preprocessing)
-        # batch_size is always 1 for single-scan datasets
-        if isinstance(obj_points, list):
-            # Single batch case - obj_points is list of CAD point clouds
-            cad_clouds_batch = obj_points
-            batch_size = 1
-            num_objects = len(cad_clouds_batch)
-        else:
-            # Legacy tensor format (if still used elsewhere)
-            batch_size, num_objects, num_points, _ = obj_points.shape
-            cad_clouds_batch = [obj_points[0, o].cpu().numpy() for o in range(num_objects)]
-        
-        # Extract features for each object using I2PMAE (like preprocessing)
+
+        cad_clouds_batch = obj_points if isinstance(obj_points, list) else [obj_points[0, o].cpu().numpy() for o in range(obj_points.shape[1])]
+        num_objects = len(cad_clouds_batch)
+
         object_features = []
         object_locations = []
         
         for o in range(num_objects):
-            if obj_masks[0, o]:  # Only process valid CAD objects
-                obj_pts = cad_clouds_batch[o]  # Raw CAD point cloud (variable size)
+            if obj_masks[0, o]:  
+                obj_pts = cad_clouds_batch[o] 
                 
-                if len(obj_pts) > 0:  # Check if CAD data exists
-                    # Sample and normalize like preprocessing normalizeObjectPCLAndExtractFeats
+                if len(obj_pts) > 0:  
                     sampled_points = point_cloud.sample_and_normalize_pcl(obj_pts)
-                    # Get object location like preprocessing
                     object_loc, object_box = point_cloud.get_object_loc_box(obj_pts)
                     
                     points_pt = torch.from_numpy(sampled_points).unsqueeze(0).to(self.device).float()
                     
                     with torch.no_grad():
-                        obj_feat = self.point_feature_extractor(points_pt)  # (1, feat_dim)
+                        obj_feat = self.point_feature_extractor(points_pt)  
                     
                     object_features.append(obj_feat.squeeze(0))
-                    object_locations.append(object_loc)  # Use all 6 elements: [center_x, center_y, center_z, size_x, size_y, size_z]
+                    object_locations.append(object_loc) 
                 else:
                     # Empty CAD data
                     object_features.append(torch.zeros(self.feat_dims[ModalityType.CAD]).to(self.device))
-                    object_locations.append(np.zeros(6))  # Zero location for empty CAD
+                    object_locations.append(np.zeros(6)) 
             else:
                 object_features.append(torch.zeros(self.feat_dims[ModalityType.CAD]).to(self.device))
-                object_locations.append(np.zeros(6))  # Zero location for invalid objects
+                object_locations.append(np.zeros(6))  
         
-        cad_features = torch.stack(object_features).unsqueeze(0)  # (1, num_objects, feat_dim)
+        cad_features = torch.stack(object_features).unsqueeze(0)  
         
-        # Apply modality encoder with computed object locations (like preprocessing)
         obj_locs = torch.from_numpy(np.stack(object_locations)).unsqueeze(0).to(self.device).float()  # (1, num_objects, 6)
         encoded_features = self.modality_encoders[ModalityType.CAD](cad_features, obj_locs, obj_masks)
         
@@ -234,32 +211,22 @@ class InstanceCrossOverModel(nn.Module):
             
             # Point modality
             if 'point' in objects_inputs:
-                # objects_inputs['point'] is now a list of point clouds
-                if isinstance(objects_inputs['point'], list):
-                    num_objects = len(objects_inputs['point'])
-                    point_mask = masks.get('point', torch.ones(1, num_objects)).to(self.device)
-                else:
-                    # Legacy tensor format
-                    point_mask = masks.get('point', torch.ones(objects_inputs['point'].size(0), objects_inputs['point'].size(1))).to(self.device)
+                num_objects = len(objects_inputs['point'])
+                point_mask = masks.get('point', torch.ones(1, num_objects)).to(self.device)
                 
                 embedding_dict['embeddings']['point'] = self.encode_point_objects(
-                    objects_inputs['point'],  # Pass directly (list or tensor)
+                    objects_inputs['point'], 
                     point_mask
                 )
                 embedding_dict['masks']['point'] = point_mask
             
             # CAD modality
             if 'cad' in objects_inputs:
-                # objects_inputs['cad'] is now a list of CAD point clouds
-                if isinstance(objects_inputs['cad'], list):
-                    num_objects = len(objects_inputs['cad'])
-                    cad_mask = masks.get('cad', torch.ones(1, num_objects)).to(self.device)
-                else:
-                    # Legacy tensor format
-                    cad_mask = masks.get('cad', torch.ones(objects_inputs['cad'].size(0), objects_inputs['cad'].size(1))).to(self.device)
+                num_objects = len(objects_inputs['cad'])
+                cad_mask = masks.get('cad', torch.ones(1, num_objects)).to(self.device)
                 
                 embedding_dict['embeddings']['cad'] = self.encode_cad_objects(
-                    objects_inputs['cad'],  # Pass directly (list or tensor)
+                    objects_inputs['cad'],  
                     cad_mask
                 )
                 embedding_dict['masks']['cad'] = cad_mask

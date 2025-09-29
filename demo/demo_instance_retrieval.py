@@ -26,13 +26,13 @@ from single_inference.datasets.multiscan_instance import MultiScanInstanceInfere
 
 DEFAULT_CONFIG = {
     'dataset': 'scannet',  # scannet, scan3r, arkitscenes, multiscan
-    'data_dir': '/drive/datasets/Scannet',  # Update this with your data path
-    'process_dir': '/drive/dumps/multimodal-spaces/preprocess_feats/Scannet',  # Update this with your processed data path
-    'ckpt': '/drive/dumps/multimodal-spaces/runs/new_runs/instance_crossover_scannet+scan3r+multiscan+arkitscenes.pth',  # Update this with your model checkpoint
-    'scan_id': 'scene0568_00',  # Default scan to search in
-    'query_modality': 'point',  # point, rgb, referral
-    'target_modality': 'referral',  # point, rgb, referral, cad
-    'query_path': './demo_data/kitchen/scene.ply',  # Path to your query file
+    'data_dir': '/drive/datasets/Scannet',
+    'process_dir': '/drive/dumps/multimodal-spaces/preprocess_feats/Scannet',
+    'ckpt': '/drive/dumps/multimodal-spaces/runs/new_runs/instance_crossover_scannet+scan3r+multiscan+arkitscenes.pth',  
+    'scan_id': 'scene0568_00', 
+    'query_modality': 'point', 
+    'target_modality': 'point', 
+    'query_path': './demo_data/kitchen/scene.ply',  # Path to your query file - refers to query object PCL
     'top_k': 5  
 }
 # =============================================================================
@@ -49,7 +49,6 @@ class InstanceRetrieval:
         self.args = args
         self.setup_model()
         
-        # Setup image transforms
         self.image_transform = tvf.Compose([
             tvf.ToTensor(),
             tvf.Normalize(mean=[0.485, 0.456, 0.406], 
@@ -62,7 +61,6 @@ class InstanceRetrieval:
         kwargs = [init_kwargs]
         self.accelerator = Accelerator(kwargs_handlers=kwargs)
         
-        # Convert args to DictConfig format expected by model
         model_args = DictConfig({
             'out_dim': self.args.out_dim,
             'input_dim_3d': self.args.input_dim_3d,
@@ -111,7 +109,7 @@ class InstanceRetrieval:
         points = np.asarray(pcd.points)
         
         # Send raw point cloud as list (like datasets) - model will handle sampling
-        point_clouds = [points]  # List of raw point clouds
+        point_clouds = [points]
         point_masks = torch.ones(1, 1).bool()  # (1, 1)
         
         data_dict = {
@@ -132,11 +130,9 @@ class InstanceRetrieval:
         
         image = Image.open(path)
         image = image.resize((224, 224), Image.BICUBIC)
-        image_pt = self.image_transform(image).unsqueeze(0)  # (1, C, H, W)
-        
-        # Convert to model expected format: (batch_size, num_objects, num_views, C, H, W)
-        rgb_data = image_pt.unsqueeze(0).unsqueeze(0)  # (1, 1, 1, C, H, W)
-        rgb_masks = torch.ones(1, 1).bool()  # (1, 1)
+        image_pt = self.image_transform(image).unsqueeze(0)  
+        rgb_data = image_pt.unsqueeze(0).unsqueeze(0) 
+        rgb_masks = torch.ones(1, 1).bool()
         
         data_dict = {
             'objects': {
@@ -152,11 +148,9 @@ class InstanceRetrieval:
     
     def _encode_referral_query(self, path: str) -> torch.Tensor:
         """Encode text referral query"""
-        if os.isfile(path):
-            with open(path, 'r') as f:
-                text = f.read().strip()
-        else:
-            text = path  # Assume path is the text itself
+        assert os.path.isfile(path), 'Referral Path should be a text file'
+        with open(path, 'r') as f:
+            text = f.read().strip()
         
         data_dict = {'referral_texts': [[[text]]]}
         
@@ -168,29 +162,23 @@ class InstanceRetrieval:
     def encode_scene(self, scan_id: str) -> Dict[str, torch.Tensor]:
         """Encode all objects in the scene and return embeddings by modality"""
         
-        # Setup dataset for this specific scan
         self.setup_dataset(scan_id)
-        
-        # Get the data for this scan
         data_dict = self.dataset.get_data()
         
         
         with torch.no_grad():
             output = self.model(data_dict)
         
-        # Extract embeddings and masks for each modality
         scene_embeddings = {}
         for modality in output['embeddings']:
             embeddings = output['embeddings'][modality].cpu()
             masks = data_dict['masks'][modality].cpu()
             
-            # Remove batch dimension
             if len(embeddings.shape) == 3:
                 embeddings = embeddings.squeeze(0)
             if len(masks.shape) == 2:
                 masks = masks.squeeze(0)
             
-            # Store embeddings and masks
             scene_embeddings[modality] = {
                 'embeddings': embeddings,
                 'masks': masks,
@@ -229,7 +217,6 @@ class InstanceRetrieval:
         target_embeddings = scene_data[target_modality]['embeddings']
         target_masks = scene_data[target_modality]['masks']
         
-        # Filter valid objects only 
         valid_mask = target_masks.bool()
         if valid_mask.sum() == 0:
             log.warning("No valid objects found in target modality")
@@ -278,7 +265,6 @@ def main():
                        choices=['point', 'rgb', 'referral', 'cad'],
                        help=f'Target modality to match against - default: {DEFAULT_CONFIG["target_modality"]}')
     
-    # Dataset arguments with defaults from config
     parser.add_argument('--dataset', type=str, default=DEFAULT_CONFIG['dataset'],
                        choices=['scannet', 'scan3r', 'arkitscenes', 'multiscan'],
                        help=f'Dataset name - default: {DEFAULT_CONFIG["dataset"]}')
@@ -289,7 +275,6 @@ def main():
     parser.add_argument('--ckpt', type=str, default=DEFAULT_CONFIG['ckpt'],
                        help=f'Path to model checkpoint - default: {DEFAULT_CONFIG["ckpt"]}')
     
-    # Optional arguments
     parser.add_argument('--top_k', type=int, default=DEFAULT_CONFIG['top_k'],
                        help=f'Number of top results to return - default: {DEFAULT_CONFIG["top_k"]}')
     
@@ -301,7 +286,6 @@ def main():
     
     args = parser.parse_args()
     
-    # Print configuration being used
     log.info("=== Instance Retrieval Configuration ===")
     log.info(f"Dataset: {args.dataset}")
     log.info(f"Data directory: {args.data_dir}")
@@ -329,7 +313,7 @@ def main():
     
     # Run retrieval
     retriever = InstanceRetrieval(args)
-    results = retriever.retrieve(
+    retriever.retrieve(
         args.query_path,
         args.query_modality, 
         args.scan_id,
@@ -337,7 +321,6 @@ def main():
         args.top_k
     )
     
-    return results
 
 
 if __name__ == '__main__':
