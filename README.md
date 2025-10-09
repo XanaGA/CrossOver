@@ -216,10 +216,12 @@ We thank the authors from [3D-VisTa](https://github.com/3d-vista/3D-VisTA), [Sce
 # :page_facing_up: Citation
 
 ```bibtex
-@inproceedings{sarkar2025crossover,
-author={Sayan Deb Sarkar and Ondrej Miksik and Marc Pollefeys and Daniel Barath and Iro Armeni},
-title={CrossOver: 3D Scene Cross-Modal Alignment}, 
-booktitle = {The IEEE Conference on Computer Vision and Pattern Recognition (CVPR)},
-year = {2025}
+@InProceedings{sarkar2025crossover,
+    author    = {Sarkar, Sayan Deb and Miksik, Ondrej and Pollefeys, Marc and Barath, Daniel and Armeni, Iro},
+    title     = {CrossOver: 3D Scene Cross-Modal Alignment},
+    booktitle = {Proceedings of the Computer Vision and Pattern Recognition Conference (CVPR)},
+    month     = {June},
+    year      = {2025},
+    pages     = {8985-8994}
 }
 ```
