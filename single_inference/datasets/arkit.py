@@ -15,7 +15,7 @@ from common.load_utils import load_yaml
 import albumentations as A
 
 class ARKitScenesInferDataset(Dataset):
-    def __init__(self, data_dir, process_dir, voxel_size=0.02, frame_skip=5, image_size=[224, 224]) -> None:
+    def __init__(self, data_dir, process_dir, voxel_size=0.02, frame_skip=1, image_size=[224, 224]) -> None:
         self.voxel_size = voxel_size
         self.frame_skip = frame_skip
         self.image_size = image_size
@@ -45,7 +45,8 @@ class ARKitScenesInferDataset(Dataset):
         self.normalize_color = A.Normalize(mean=color_mean, std=color_std)
     
     def extract_images(self, scan_id, color_path):
-        pose_data = arkit.load_poses(self.scans_dir, scan_id, skip=self.frame_skip)      
+        scan_dir = osp.join(self.scans_dir, scan_id)
+        pose_data = arkit.load_poses(scan_dir, scan_id, skip=self.frame_skip)      
         frame_idxs = list(pose_data.keys())
         
         pose_data_arr = []

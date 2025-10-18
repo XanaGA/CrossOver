@@ -20,8 +20,11 @@ We detail data download and release instructions for preprocessing with scripts 
 ### Generated Embedding Data
 We release the scene level embeddings created with CrossOver on the currenly used datasets in [GDrive](https://drive.google.com/drive/folders/12vn5CCvnI9zagFyYrGzLLlMPTgF7rndW?usp=sharing), which can be used for cross-modal retrieval with custom data as detailed in demo section.
 
-- `embed_scannet.pt`: Scene Embeddings For All Modalities (Point Cloud, RGB, Floorplan, Referral) in ScanNet
-- `embed_scan3r.pt` : Scene Embeddings For All Modalities (Point Cloud, RGB, Referral) in 3RScan
+- `embed_scannet.npz`: Scene Embeddings For All Modalities (Point Cloud, RGB, Floorplan, Referral) in ScanNet
+- `embed_scan3r.npz` : Scene Embeddings For All Modalities (Point Cloud, RGB, Referral) in 3RScan
+- `embed_multiscan.npz` : Scene Embeddings For All Modalities (Point Cloud, RGB, Referral) in MultiScan
+- `embed_arkitscenes.npz` : Scene Embeddings For All Modalities (Point Cloud, RGB, Referral) in ARKitScenes
+
 
 > You agree to the terms of ScanNet, 3RScan, ShapeNet, Scan2CAD, MultiScan, ARKitScenes and SceneVerse datasets by downloading our hosted data.
 

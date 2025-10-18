@@ -70,10 +70,8 @@ assume complete data availability across all modalities. We present **CrossOver*
 # :newspaper: News
 - ![](https://img.shields.io/badge/New!-8A2BE2) **Version 1.0** - **CrossOver is now stronger than ever**. We recommend updating to this version; changes include:
   - More powerful pre-trained checkpoints; now available on Huggingface 👉 [here](https://huggingface.co/gradient-spaces/CrossOver/tree/main).
-  - Support for 2 additional datasets - ARKitScenes & MultiScan
-  
+  - Support for 2 additional datasets - ARKitScenes & MultiScan  
 
-- [2025-05] Pretrained checkpoints have been moved to HuggingFace 👉 [here](https://huggingface.co/gradient-spaces/CrossOver/tree/main).
 - [2025-03] CrossOver is accepted to **CVPR 2025** as **Highlight**. 🔥
 - [2025-02] **Version 0.1** - We release CrossOver on arXiv with codebase + pre-trained checkpoints. Checkout our [paper](https://arxiv.org/abs/2502.15011) and [website](https://sayands.github.io/crossover/).
 
@@ -141,15 +139,15 @@ $ python demo/demo_instance_retrieval.py
 
 Various configurable parameters:
 
-- `--query_path`: Path to query object(point cloud, image, or text) 
+- `--query_path`: Path to query object (point cloud, image, or text) 
 - `--query_modality`: Query modality - Options: `point`, `rgb`, `referral` 
 - `--scan_id`: Scene ID to search in 
 - `--target_modality`: Target modality to match against - Options: `point`, `rgb`, `referral`, `cad` 
 - `--dataset`: Dataset name - Options: `scannet`, `scan3r`, `arkitscenes`, `multiscan` 
-- `--data_dir`: Path to dataset directory - default: `/drive/datasets/Scannet`
+- `--data_dir`: Path to dataset directory 
 - `--process_dir`: Path to preprocessed features directory (for gt-projection-seg.npz)
-- `--ckpt`: Path to model checkpoint 
-- `--top_k`: Number of top results to return - default: `5`
+- `--ckpt`: Path to pre-trained instance crossover model checkpoint (details [here](#checkpoints)) 
+- `--top_k`: Number of top results to return
 
 
 ## Scene Retrieval Demo
@@ -166,7 +164,7 @@ Various configurable parameters:
 - `--database_path`: Path to the precomputed embeddings of the database scenes downloaded before (eg: `./release_data/embed_scannet.pt`).
 - `--query_modality`: Modality of the query scene, Options: `point`, `rgb`, `floorplan`, `referral`
 - `--database_modality`: Modality used for retrieval. Same options as above.
-- `--ckpt`: Path to the pre-trained scene crossover model checkpoint (details [here](#checkpoints)), example_path: `./checkpoints/scene_crossover_scannet+scan3r.pth/`).
+- `--ckpt`: Path to the pre-trained scene crossover model checkpoint (details [here](#checkpoints)), example_path: `./checkpoints/scene_crossover_scannet+scan3r.pth/`.
 
 For embedding and pre-trained model download, refer to [generated embedding data](DATA.md#generated-embedding-data) and [checkpoints](#checkpoints) sections.
 
