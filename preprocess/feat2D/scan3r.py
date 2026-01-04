@@ -62,7 +62,7 @@ class Scan3R2DProcessor(Base2DProcessor):
         load_utils.ensure_dir(scene_out_dir)
         
         obj_id_imgs = {}        
-        ply_data = scan3r.load_ply_data(self.data_dir, scan_id, self.label_filename)
+        ply_data = scan3r.load_ply_data_2d(self.data_dir, scan_id, self.label_filename)
         instance_ids = ply_data['objectId']
         
         camera_info = scan3r.load_intrinsics(scene_folder)
