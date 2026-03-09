@@ -20,10 +20,7 @@ dependencies:
   - tqdm
   - pillow
   - pyyaml
-  - opencv-python
-  - open3d
   - trimesh
-  - vtk
   - pyquaternion
   - pytz
   - jupyter
@@ -34,6 +31,9 @@ dependencies:
   - ipywidgets
   - tensorboard
   - pip:
+      - opencv-python
+      - open3d
+      - vtk
       - transformers==4.46.1
       - einops==0.8.0
       - timm==0.9.10
@@ -43,7 +43,6 @@ dependencies:
       - wandb
       - dash
       - plotly
-      - tqdm
       - pyopengl==3.1.0
       - pyrender==0.1.45
       - torch-kmeans==0.2.0
