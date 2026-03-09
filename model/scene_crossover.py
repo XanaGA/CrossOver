@@ -3,7 +3,7 @@ import torch.nn as nn
 from omegaconf import DictConfig
 from typing import Any, Dict, List
 import MinkowskiEngine as ME
-
+import torch.nn.functional as F
 from third_party.BLIP.models.blip import blip_feature_extractor
 from modules.layers.patch_encoder import Mlps
 from modules.layers.sparse_conv_encoder import ResNet34
@@ -25,7 +25,8 @@ class SceneCrossOverModel(nn.Module):
         
         self.encoder1D_mlp_head = get_mlp_head(args.input_dim_1d, args.input_dim_1d, args.out_dim)
         
-        self.encoder2D = DinoV2('dinov2_vitg14', self.device).feature_extractor
+        # self.encoder2D = DinoV2('dinov2_vitg14', self.device).feature_extractor
+        self.encoder2D = DinoV2('dinov2_vits14', self.device).feature_extractor
         self.frame_mlp = Mlps(args.input_dim_2d * 2, [args.input_dim_2d], args.input_dim_2d)
         self.encoder2D_mlp_head = get_mlp_head(args.input_dim_2d, args.input_dim_2d // 2, args.out_dim)        
     
@@ -52,6 +53,18 @@ class SceneCrossOverModel(nn.Module):
     def encode_floorplan(self, floorplan: torch.Tensor) -> torch.Tensor:
         floorplan_embedding = self.encoder2D(floorplan)
         floorplan_embedding = floorplan_embedding[:, 0]
+        # #TODO: REMOVE THIS
+        # # Add a channel dimension → (N, C, L)
+        # x = floorplan_embedding.unsqueeze(1)  # shape: (2, 1, 384)
+        # x_resized = F.interpolate(
+        #     x,
+        #     size=1536,
+        #     mode='linear',      # 1D linear interpolation
+        #     align_corners=False
+        # )
+
+        # floorplan_embedding = x_resized.squeeze(1)  # shape: (2, 1024)
+        # # FINISH REMOVE
         floorplan_embedding = self.encoder2D_mlp_head(floorplan_embedding)
         
         return floorplan_embedding

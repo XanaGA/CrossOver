@@ -1,0 +1,26 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+
+        {
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}:${workspaceFolder}/third_party/BLIP"
+            },
+            "name": "Python Debugger: Evaluate CrossOver",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "mmfe_evaluation.evaluate_crossover",
+            "console": "integratedTerminal",    
+            "args": [
+                "--ckpt", "/home/xavi/CrossOver/checkpoints/",
+                "--data_root", "/home/xavi/mmfe/data/structure3D/Structured3D_bbox/Structured3D",
+                "--val_json", "/home/xavi/mmfe/data/structure3D/val.json",
+                "--all_pairs",
+                "--furniture_pct", "0.0", "0.5", "1.0",
+            ]
+        },
+    ]
+}
