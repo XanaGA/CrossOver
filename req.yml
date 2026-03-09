@@ -3,7 +3,7 @@ channels:
   - pytorch
   - nvidia
   - conda-forge
-dependencies:  
+dependencies:
   - python=3.9
   - pip
   - pytorch=2.4
@@ -12,28 +12,23 @@ dependencies:
   - torchaudio=2.4
   - numpy
   - scipy
-  - scikit-learn
-  - scikit-image
   - pandas
   - matplotlib
-  - seaborn
   - tqdm
-  - pillow
   - pyyaml
-  - trimesh
-  - pyquaternion
-  - pytz
-  - jupyter
-  - jupyterlab
-  - notebook
-  - ipykernel
-  - ipython
-  - ipywidgets
-  - tensorboard
   - pip:
       - opencv-python
       - open3d
       - vtk
+      - trimesh
+      - scikit-learn
+      - scikit-image
+      - seaborn
+      - pyquaternion
+      - pytz
+      - jupyterlab
+      - notebook
+      - tensorboard
       - transformers==4.46.1
       - einops==0.8.0
       - timm==0.9.10
