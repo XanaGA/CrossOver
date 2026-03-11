@@ -1,7 +1,7 @@
 name: "CrossOver"
 rng_seed        : 42
 num_gpu         : 1
-base_dir        : "/drive/dumps/multimodal-spaces/"
+base_dir        : "/home/xavi/CrossOver/tmp"
 exp_dir         : ""
 mode            : "train"
 naming_keywords : ['task', 'time']
@@ -18,8 +18,8 @@ data :
   process_dir : ${base_dir}/preprocess_feats
   
   Scannet:
-    base_dir         : /drive/datasets/Scannet
-    shape_dir        : /drive/datasets/Shapenet/ShapeNetCore.v2
+    base_dir         : /home/xavi/CrossOver/scannet_data/scannet_og
+    shape_dir        : null
     process_dir      : ${data.process_dir}/Scannet
     chunked_dir      : ${data.process_dir}/objects_chunked/Scannet
     processor1D      : Scannet1DProcessor
@@ -68,7 +68,7 @@ task:
     val                     : [Scannet]
     modalities              : ['rgb', 'point', 'cad', 'referral']
     scene_modalities        : ['rgb', 'point', 'referral', 'floorplan'] #, 'point']
-    ckpt_path               : /drive/dumps/multimodal-spaces/runs/release_runs/scene_crossover_scannet+scan3r+multiscan.pth
+    ckpt_path               : /home/xavi/CrossOver/checkpoints/model.safetensors
 
 inference_module: SceneRetrieval
 model: 
