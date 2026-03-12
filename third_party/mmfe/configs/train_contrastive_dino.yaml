@@ -1,0 +1,104 @@
+defaults:
+  - _self_
+
+# Data configuration
+data:
+  image_size: [256, 256]
+  cubicasa:
+    path: data/cubicasa5k/
+    train: data/cubicasa5k/train.txt
+    val: data/cubicasa5k/val.txt
+  structured3d:
+    # path: data/structure3D/Structured3D_bbox/Structured3D/
+    # train: data/structure3D/train.json
+    # val: data/structure3D/val.json
+    path: null
+    train: null
+    val: null
+  aria_synthenv:
+    # path: data/aria/SyntheticEnv/rendered_data/
+    # train: data/aria/SyntheticEnv/train.txt
+    # val: data/aria/SyntheticEnv/val.txt
+    path: null
+    train: null
+    val: null
+
+  swiss_dwellings:
+    path: data/SwissDwellings/modified-swiss-dwellings-v2/all_render/
+    train: data/SwissDwellings/modified-swiss-dwellings-v2/train.txt
+    val: data/SwissDwellings/modified-swiss-dwellings-v2/val.txt
+
+  zillow:
+    path: data/zind/rendered_data/
+    train: data/zind/train.txt
+    val: data/zind/val.txt
+  
+
+  # Transformation configuration
+  affine_transform:
+    common_degrees: 180
+    common_translate: [0.0, 0.0]
+    common_scale:  [1.0, 1.0]
+
+    noise_degrees: 25
+    noise_translate: [0.2, 0.2]
+    noise_scale:  [0.5, 1.5]
+
+# Training loop configuration
+train:
+  batch_size: 16
+  epochs: 100
+  num_workers: 4
+  gpus: 1
+  precision: 16
+  accumulate_grad_batches: 1
+  seed: 42
+  deterministic: false
+  train_equivariant: true
+
+# Model configuration
+model:
+  backbone: dinov3_vitb16
+  projection_dim: 32
+  projection_spatial: [32, 32]
+  projection_head: MoGe1
+  freeze_backbone: true
+  backbone_kwargs: 
+    dino_weights_path: data/third_party_checkpoints/dinov3_checkpoints/dinov3_vitb16_pretrain.pth 
+    local_path: data/checkpoints/dinov3_checkpoints
+
+# Loss configuration
+loss:
+  type: infonce2d
+  temperature: 0.07
+  margin: 1.0
+  block_size: 1024
+  neg_sampling: none        # "none" | "hard" | "random"
+  neg_k: 0                    # 0 means default (half batch); otherwise number of negatives
+  random_per_row: true        # if true, sample different negatives per row; else shared across rows
+
+# Optimizer configuration
+optim:
+  lr: 1.0e-4
+  weight_decay: 1.0e-4
+
+# Scheduler configuration
+scheduler:
+  use: false
+
+# Logging & checkpointing
+logging:
+  output_dir: outputs/contrastive
+  project_name: contrastive_learning
+  experiment_name: local_proj_dim=${model.projection_dim}_${model.backbone}_${model.projection_head}_common=${data.affine_transform.common_degrees}_${data.affine_transform.common_translate}_${data.affine_transform.common_scale}_noise=${data.affine_transform.noise_degrees}_${data.affine_transform.noise_translate}_${data.affine_transform.noise_scale}_train_eq=${train.train_equivariant}
+  save_top_k: 5
+  wandb: true
+
+# Hydra runtime configuration
+hydra:
+  run:
+    dir: ${logging.output_dir}/${now:%Y-%m-%d_%H-%M-%S}
+  job:
+    chdir: true
+
+

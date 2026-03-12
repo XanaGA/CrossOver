@@ -1,0 +1,71 @@
+# @package _global_
+
+defaults:
+  - _self_
+
+model:
+  checkpoint: null
+  kwargs:
+    upsampler_type: null
+    upsampler_output_size: null
+    roma_mmfe_checkpoint: null
+    use_dino_res: false
+
+data:
+  cubicasa:
+    path: null
+    val: null
+  structured3d:
+    path: null
+    val: null
+  aria_synthenv:
+    path: null
+    val: null
+  swiss_dwellings:
+    path: null
+    val: null
+  zillow:
+    path: null
+    val: null
+  scannet:
+    path: null
+    val: null
+  image_size: [256, 256]
+
+transforms:
+  mean: [0.485, 0.456, 0.406]
+  std: [0.229, 0.224, 0.225]
+  angle: 0.0
+  tx: 0.1
+  ty: 0.1
+  scale: 1.0
+  tf_difficulty: null
+  rotate_after: false
+
+eval:
+  batch_size: 1
+  num_workers: 8
+  max_batches: null
+  threshold: [3, 5, 10.0]
+  method: "ransac"
+  tta_n_augs: 8
+  use_gt_correspondances: false
+  filter_by_certainty: false
+  use_inliers: false
+
+runtime:
+  device: "cuda"
+
+logging:
+  output_csv: "outputs/metrics/alignment_analysis.csv"
+
+analysis:
+  pixel_threshold: 10.0   # which accuracy@{threshold} column to inspect
+  min_accuracy: 90.0      # consider alignments with accuracy below this as \"bad\"
+  output_subdir: "analysis_viz"
+
+
+
+
+
+

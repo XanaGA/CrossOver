@@ -1,0 +1,59 @@
+# ControlNet training configuration
+# Aligned with scripts/train_controlnet_ligthning.py
+
+defaults:
+  - _self_
+
+# Data configuration
+data:
+  image_size: [256, 256]
+  cubicasa:
+    path: data/cubicasa5k/
+    train: data/cubicasa5k/train.txt
+    val: data/cubicasa5k/val.txt
+  structured3d:
+    path: data/structure3D/Structured3D_bbox/Structured3D/
+    train: data/structure3D/train.json
+    val: data/structure3D/val.json
+
+# Training loop configuration
+train:
+  batch_size: 1
+  epochs: 1
+  num_workers: 4
+  max_steps: 0           # 0 disables, otherwise stops after N steps
+  accumulate_grad_batches: 2
+  max_grad_norm: 1.0
+  seed: 123
+  mixed_precision: no     # one of: [no, fp16, bf16]
+  enable_xformers: true
+  gradient_checkpointing: true
+  allow_tf32: true
+  use_8bit_adam: true
+
+# Model configuration
+model:
+  pretrained: runwayml/stable-diffusion-v1-5
+  controlnet: ""          # optional: path or HF id to resume ControlNet
+  revision: null
+  variant: null
+
+# Optimizer configuration
+optim:
+  lr: 5.0e-6
+
+# Logging & checkpointing
+logging:
+  output_dir: outputs/controlnet
+  project_name: controlnet
+  experiment_name: controlnet_run
+  wandb: true
+  log_interval: 50
+  val_interval: 500
+
+# Hydra runtime configuration
+hydra:
+  run:
+    dir: ${logging.output_dir}/${now:%Y-%m-%d_%H-%M-%S}
+  job:
+    chdir: true

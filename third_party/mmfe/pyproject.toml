@@ -1,0 +1,53 @@
+[project]
+name = "src"
+version = "0.1.0"
+description = "Multimodal Floorplan Encoding"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "matplotlib>=3.10.5",
+    "numpy>=2.2.6",
+    "tqdm>=4.67.1",
+    "opencv-python>=4.10.0.84",
+    "torch==2.9.0",
+    "torchvision==0.24.0",
+    "shapely>=2.0.5",
+    "CairoSVG>=2.8.2",
+    "ipython>=9.4.0",
+    "plyfile>=1.1.2",
+    "scikit-learn>=1.7.1",
+    "open3d==0.19.0",
+    "lmdb==1.7.3",
+    "scikit-image==0.25.2",
+    "svgpathtools==1.7.1",
+    "pytorch-lightning>=1.8.0",
+    "pytorch-metric-learning",
+    "wandb>=0.12.0",
+    "hydra-core>=1.3.2",
+    "omegaconf>=2.3.0",
+    "transformers>=4.42.0",
+    "diffusers>=0.30.0",
+    "xformers",
+    "accelerate>=0.33.0",
+    "projectaria-tools",
+    "ipykernel",
+    "einops>=0.6.0",
+    "pyrender",
+    "trimesh",
+    "IP-Adapter @ git+https://github.com/tencent-ailab/IP-Adapter.git",
+    "python-dotenv>=1.0.1",
+    "termcolor",
+]
+
+[project.optional-dependencies]
+roma = [
+    "romav2 @ git+https://github.com/Parskatt/RoMaV2.git",
+]
+
+roma1 = [
+    "romatch @ git+https://github.com/XanaGA/RoMa.git",
+    "fused-local-corr ; sys_platform == 'linux'",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]

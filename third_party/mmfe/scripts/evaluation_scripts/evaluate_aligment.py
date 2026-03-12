@@ -1,0 +1,961 @@
+#!/usr/bin/env python3
+"""
+Evaluate alignment between two modality embeddings across the entire validation dataset.
+
+This script:
+- Loads a model checkpoint and the full validation dataset
+- Iterates through all validation batches
+- Applies affine transformations (rotation, translation, scale) to modality_1 embeddings
+- Estimates affine transformations between modality_0 and transformed modality_1
+- Evaluates alignment performance by comparing transformed image corners with ground truth
+- Saves results to a CSV file
+
+Run example:
+  python scripts/evaluate_aligment.py \
+    model.checkpoint=/abs/path/model.ckpt \
+    data.cubicasa.path=/abs/cubicasa5k data.cubicasa.val=/abs/cubicasa5k/val.txt \
+    data.structured3d.path=/abs/Structured3D data.structured3d.val=/abs/Structured3D/val.json \
+    data.image_size='[256,256]' \
+    transforms.angle=30 transforms.tx=10 transforms.ty=5 transforms.scale=1.1 \
+    eval.threshold=5.0 eval.batch_size=8 \
+    logging.output_csv=/abs/outputs/metrics/alignment_evaluation.csv
+"""
+
+import os
+import sys
+import gc
+import matplotlib
+from mmfe_utils.dino_utils import get_last_feature_dino, load_dino
+from mmfe_utils.tensor_utils import norm_tensor_to_pil
+from roma.roma_pl_module import RoMaFineTuner
+matplotlib.use('Agg')  # add this
+import matplotlib.pyplot as plt
+
+import cv2
+from hydra.utils import to_absolute_path
+import numpy as np
+import pandas as pd
+
+import torch
+from torch.utils.data import DataLoader
+import torch.nn.functional as F
+from torchvision.transforms import functional as TF
+import torch.nn as nn
+from inference.tta import run_tta, run_roma_tta, extract_selected_params
+from mmfe_utils.tensor_utils import torch_erode
+
+# Add src to path
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'src'))
+
+from dataloading.unified_dataset import UnifiedDataset
+from dataloading.dual_transforms import PairToPIL, PairResize, PairGrayscale, PairToTensor, PairNormalize, PairRandomAffine
+from training.lightning_module import ContrastiveLearningModule
+from mmfe_utils.aligment import (compose_affine_matrices, find_nn, inverse_affine_matrix, params_to_affine_matrix, 
+                           rot_to_affine, apply_affine_2d_map, 
+                           apply_affine_2d_points, estimate_affine_matrix, estimate_affine_matrix_multiple,
+                           evaluate_corner_alignment)
+
+from omegaconf import DictConfig, OmegaConf
+import hydra
+from hydra.utils import to_absolute_path
+from tqdm import tqdm
+from dotenv import load_dotenv
+try:
+    from romav2 import RoMaV2
+except ImportError:
+    print("RoMaV2 not found")
+
+try:
+   from romatch import roma_indoor
+   from romatch.models.matcher import RegressionMatcher
+except ImportError:
+    print("RoMaV1 not found")
+from mmfe_utils.data_utils import create_val_dataset
+
+METHOD_TO_RESOLUTION = {
+    "mmfe": (32,32),
+    "dinov2_vitb14_256": (18,18),
+    "dinov3_vitb16_256": (16,16),
+    "dinov2_vitb14_560": (40,40),
+    "dinov3_vitb16_560": (35,35),
+}
+
+DINO_V3_ROMA2_DIMS = 1024 * 2
+
+class MyUpsampler(torch.nn.Module):
+    def __init__(self, mode: str="bilinear", neural_upsampler: torch.nn.Module=None):
+        super(MyUpsampler, self).__init__()
+        self.mode = mode
+        self.neural_upsampler = neural_upsampler
+
+    def forward(self, x: torch.Tensor, output_size: tuple, original_images: torch.Tensor=None) -> torch.Tensor:
+        if self.mode == "bilinear":
+            return F.interpolate(x, size=output_size, mode='bilinear', align_corners=False)
+        elif self.mode == "nearest":
+            return F.interpolate(x, size=output_size, mode='nearest', align_corners=False)
+        elif self.mode == "anyup":
+            assert self.neural_upsampler is not None, "neural_upsampler must be provided for anyup mode"
+            return self.neural_upsampler(original_images, x, output_size)
+        else:
+            raise ValueError(f"Unsupported mode: {self.mode}")
+
+class RoMaBackboneWrapper(nn.Module):
+    """
+    Wraps a custom backbone producing 32-D features and expands them
+    into the 1024-D × 2 features required by RoMa.
+    """
+    def __init__(
+        self,
+        backbone,
+        in_dim=32,
+        out_dim=1024,
+        projection="conv",      # "conv", "bilinear", or nn.Module
+    ):
+        super().__init__()
+        self.backbone = backbone
+        self.in_dim = in_dim
+        self.out_dim = out_dim
+
+        # ------- SELECT PROJECTION TYPE -------
+        if isinstance(projection, nn.Module):
+            # user-provided module, e.g. MLP or 3×3 Conv
+            self.proj = projection
+            self.use_custom = True
+
+        elif projection == "conv":
+            # learned 1×1 conv projection
+            self.proj = nn.Conv2d(in_dim, out_dim, kernel_size=1)
+            self.use_custom = False
+
+        elif projection == "bilinear":
+            # non-learned upsampling to channel dimension using tiling
+            # NOTE: you cannot bilinearly upsample channels directly
+            # so we replicate channels up to out_dim
+            self.proj = None
+            self.use_bilinear = True
+
+        else:
+            raise ValueError(f"Unknown projection type: {projection}")
+
+        if projection != "bilinear":
+            self.use_bilinear = False
+
+
+    def _bilinear_expand(self, f):
+        """
+        Non-learned expansion trick:
+        - keeps spatial resolution
+        - repeats channels to reach out_dim
+        """
+        if self.in_dim == self.out_dim:
+            return f
+
+        # repeat channels
+        reps = self.out_dim // self.in_dim
+        out = f.repeat(1, reps, 1, 1)
+
+        # if dims don't divide evenly
+        if out.shape[1] < self.out_dim:
+            extra = self.out_dim - out.shape[1]
+            out = torch.cat([out, f[:, :extra]], dim=1)
+
+        return out
+
+
+    def forward(self, x):
+        # Backbone must return (B, in_dim, H/16, W/16)
+        f = self.backbone(x)
+
+        # Apply chosen projection mechanism
+        if self.use_bilinear:
+            f1 = self._bilinear_expand(f).permute(0, 2, 3, 1)
+            f2 = self._bilinear_expand(f).permute(0, 2, 3, 1)
+
+        else:
+            f1 = self.proj(f).permute(0, 2, 3, 1)
+            f2 = self.proj(f).permute(0, 2, 3, 1)
+
+        return [f1, f2]   # (B, out_dim, H/16, W/16)
+
+def denormalize_tensor(tensor: torch.Tensor, mean: torch.Tensor, std: torch.Tensor) -> torch.Tensor:
+    """Denormalize a tensor for visualization."""
+    tensor = tensor.clone()
+    for t, m, s in zip(tensor, mean, std):
+        t.mul_(s).add_(m)
+    return torch.clamp(tensor, 0, 1)
+
+def denormalize_numpy(array: np.ndarray, mean: np.ndarray, std: np.ndarray) -> np.ndarray:
+    """Denormalize a numpy array for visualization."""
+    array = array.copy()
+    for a, m, s in zip(array, mean, std):
+        a *= s
+        a += m
+    return np.clip(array, 0, 1)
+
+def save_best_worst_alignments(batch, batch_results, batch_idx: int, cfg: DictConfig, threshold=3):
+    """Save a 4x3 grid image showing best (top-2) and worst (bottom-2) alignments for this batch.
+
+    Columns: [Modality 0, Modality 1 (as used), Modality 1 corrected by estimated affine].
+    Rows:    [Best #1, Best #2, Worst #1, Worst #2]
+    """
+    if len(batch_results) == 0:
+        return
+
+    # Select best and worst by accuracy (fall back to mean_distance if accuracy missing)
+    def sort_key(res):
+        acc = res.get(f'accuracy@{int(threshold)}', None)
+        if acc is None or np.isnan(acc):
+            return -np.inf
+        return acc
+
+    valid = [r for r in batch_results if not np.isnan(r.get('accuracy', np.nan))]
+    if len(valid) == 0:
+        valid = batch_results
+
+    best_sorted = sorted(valid, key=sort_key, reverse=True)
+    worst_sorted = sorted(valid, key=sort_key, reverse=False)
+
+    picks = []
+    for i in range(min(2, len(best_sorted))):
+        picks.append(best_sorted[i])
+    for i in range(min(2, len(worst_sorted))):
+        # Avoid duplicating entries if batch is very small
+        if worst_sorted[i] not in picks:
+            picks.append(worst_sorted[i])
+    # If still fewer than 4, pad with bests
+    while len(picks) < 4 and len(best_sorted) > 0:
+        for r in best_sorted:
+            if r not in picks:
+                picks.append(r)
+                if len(picks) == 4:
+                    break
+
+    # Prepare output
+    out_dir = os.path.join(os.path.dirname(to_absolute_path(cfg.logging.output_csv)), 'debug_viz')
+    os.makedirs(out_dir, exist_ok=True)
+    fig_path = os.path.join(out_dir, f'batch_{batch_idx:04d}_th_{int(threshold)}.png')
+
+    # Mean/Std for denormalization
+    mean = torch.tensor([0.485, 0.456, 0.406])
+    std = torch.tensor([0.229, 0.224, 0.225])
+    norm_filler = (1 - mean) / std
+
+    # Plot
+    fig, axs = plt.subplots(4, 3, figsize=(14, 16))
+    prefixes = ['Best #1', 'Best #2', 'Worst #1', 'Worst #2']
+    for row_idx, (res, prefix) in enumerate(zip(picks, prefixes)):
+        i = res['batch_idx']  # index within this batch
+
+        # Original modality 0 image (denormalized)
+        img0 = denormalize_tensor(batch['modality_0'][i].cpu(), mean, std).permute(1, 2, 0).numpy()
+
+        # Decide which modality 1 to show: replicate the transforms used for alignment
+        # Determine the actual affine applied to modality 1 for alignment view
+        # If rotate_after is False and tf_difficulty provided, dataset already transformed modality_1 -> use modality_1_noise
+        # If rotate_after is False and deterministic, we applied true_affine -> apply here to the original modality_1
+        # If rotate_after is True, we rotated embeddings only -> for display, rotate modality_1 by the actual_affine
+        if cfg.transforms.tf_difficulty is not None and not cfg.transforms.rotate_after and 'modality_1_noise' in batch:
+            img1_disp_tensor = batch['modality_1_noise'][i].cpu()
+        else:
+            img1_orig = batch['modality_1'][i].cpu()
+            if res.get('rotate_after', False):
+                actual_affine = np.array(res.get('actual_affine')) if res.get('actual_affine') is not None else None
+                if actual_affine is not None:
+                    img1_disp_tensor = apply_affine_2d_map(img1_orig, actual_affine).cpu()
+                    mask = apply_affine_2d_map(torch.ones(1, img1_orig.shape[1], img1_orig.shape[2]), actual_affine)
+                    mask = torch_erode(mask, kernel_size=3)
+                    black_threshold = 0.5
+                    img1_disp_tensor = torch.where(~(mask.repeat(3, 1, 1) < black_threshold), img1_disp_tensor, norm_filler[..., None, None])
+                else:
+                    img1_disp_tensor = img1_orig
+            else:
+                # If rotate_after is False and deterministic, modality_1 may have been rotated inside processing; mirror it here
+                actual_affine = np.array(res.get('actual_affine')) if res.get('actual_affine') is not None else None
+                if actual_affine is not None and cfg.transforms.tf_difficulty is None:
+                    img1_disp_tensor = apply_affine_2d_map(img1_orig, actual_affine).cpu()
+                    mask = apply_affine_2d_map(torch.ones(1, img1_orig.shape[1], img1_orig.shape[2]), actual_affine)
+                    mask = torch_erode(mask, kernel_size=3)
+
+                    black_threshold = 0.5
+
+                    # cv2.imshow("mask", ((mask< black_threshold)[0]*255).cpu().numpy().astype(np.uint8))
+                    # cv2.waitKey(0)
+
+                    img1_disp_tensor = torch.where(~(mask.repeat(3, 1, 1) < black_threshold), img1_disp_tensor, norm_filler[..., None, None])
+                else:
+                    img1_disp_tensor = img1_orig
+
+        img1 = denormalize_tensor(img1_disp_tensor, mean, std).permute(1, 2, 0).numpy()
+
+        # Correct modality 1 by the estimated affine
+        aff_est = np.array(res.get('aff_est')) if res.get('aff_est') is not None else None
+        if aff_est is not None:
+            corrected = apply_affine_2d_map(img1_disp_tensor, inverse_affine_matrix(aff_est))
+            mask = apply_affine_2d_map(torch.ones(1, img1_disp_tensor.shape[1], img1_disp_tensor.shape[2]), inverse_affine_matrix(aff_est))
+            mask = torch_erode(mask, kernel_size=3)
+            black_threshold = 0.5
+            corrected = torch.where(~(mask.repeat(3, 1, 1) < black_threshold), corrected, norm_filler[..., None, None])
+            corrected = denormalize_tensor(corrected, mean, std).permute(1, 2, 0).cpu().numpy()
+        else:
+            corrected = img1
+
+        # Get corner information
+        corners_original = np.array(res.get('corners_original', [])) if res.get('corners_original') is not None else None
+        corners_gt = np.array(res.get('corners_gt', [])) if res.get('corners_gt') is not None else None
+        corners_pred = np.array(res.get('corners_pred', [])) if res.get('corners_pred') is not None else None
+        corner_labels = ['TL', 'TR', 'BL', 'BR']
+        
+        # Plot three columns
+        axs[row_idx, 0].imshow(img0)
+        # axs[row_idx, 0].set_title(f'{prefix} - Modality 0')
+        axs[row_idx, 0].set_title(f' ')
+        axs[row_idx, 0].axis('off')
+        
+        # Draw original corners on modality 0
+        if corners_original is not None and len(corners_original) > 0:
+            for corner_idx, (corner, label) in enumerate(zip(corners_original, corner_labels)):
+                axs[row_idx, 0].scatter(corner[0], corner[1], color='red', s=80, marker='o', 
+                                       edgecolors='white', linewidth=2, alpha=0.8)
+                axs[row_idx, 0].text(corner[0] + 5, corner[1] - 5, f'{label}_GT', color='white', 
+                                    fontsize=9, fontweight='bold',
+                                    bbox=dict(boxstyle='round,pad=0.2', facecolor='red', alpha=0.7))
+
+        axs[row_idx, 1].imshow(img1)
+        # axs[row_idx, 1].set_title(f'{prefix} - Modality 1')
+        axs[row_idx, 1].set_title(f' ')
+        axs[row_idx, 1].axis('off')
+        
+        # Draw GT corners on transformed modality 1
+        if corners_gt is not None and len(corners_gt) > 0:
+            for corner_idx, (corner, label) in enumerate(zip(corners_gt, corner_labels)):
+                axs[row_idx, 1].scatter(corner[0], corner[1], color='green', s=80, marker='o',
+                                       edgecolors='white', linewidth=2, alpha=0.8)
+                axs[row_idx, 1].text(corner[0] + 5, corner[1] - 5, label, color='white',
+                                    fontsize=8, fontweight='bold',
+                                    bbox=dict(boxstyle='round,pad=0.2', facecolor='green', alpha=0.7))
+
+        accuracy = res.get(f'accuracy@{int(threshold)}.0', 0) if res.get(f'accuracy@{int(threshold)}', 0) == 0 else res.get(f'accuracy@{int(threshold)}', 0)
+        accuracy10 = res.get('accuracy@10.0', 0) if res.get('accuracy@10', 0) == 0 else res.get('accuracy@10', 0)
+        axs[row_idx, 2].imshow(corrected)
+        axs[row_idx, 2].set_title(f'Acc@{threshold}: {accuracy:.1f}% | Acc@10: {accuracy10:.1f}%', pad=20)
+        axs[row_idx, 2].axis('off')
+        
+        # Draw both GT and predicted corners on corrected image, with connecting lines
+        if corners_gt is not None and corners_pred is not None and len(corners_gt) > 0 and len(corners_pred) > 0:
+            actual_affine = np.array(res.get('actual_affine')) if res.get('actual_affine') is not None else None
+            corrected_corners = apply_affine_2d_points(corners_pred, inverse_affine_matrix(actual_affine),
+                                                        center=np.array([img1.shape[1]//2, img1.shape[0]//2]))
+
+            # Draw lines connecting GT and predicted corners
+            for gt_corner, pred_corner in zip(corners_original, corrected_corners):
+                axs[row_idx, 2].plot([gt_corner[0], pred_corner[0]], [gt_corner[1], pred_corner[1]], 
+                                    'yellow', linewidth=2, alpha=0.6)
+            
+            # Draw GT corners
+            for corner_idx, (corner, label) in enumerate(zip(corners_original, corner_labels)):
+                axs[row_idx, 2].scatter(corner[0], corner[1], color='green', s=80, marker='o',
+                                       edgecolors='white', linewidth=2, alpha=0.8)
+                axs[row_idx, 2].text(corner[0] + 5, corner[1] - 5, f'{label}_P', color='white',
+                                    fontsize=8, fontweight='bold',
+                                    bbox=dict(boxstyle='round,pad=0.2', facecolor='green', alpha=0.7))
+            
+            # Draw predicted corners
+            for corner_idx, (corner, label) in enumerate(zip(corrected_corners, corner_labels)):
+                axs[row_idx, 2].scatter(corner[0], corner[1], color='blue', s=80, marker='s',
+                                       edgecolors='white', linewidth=2, alpha=0.8)
+                axs[row_idx, 2].text(corner[0] + 5, corner[1] + 10, f'{label}_GT', color='white',
+                                    fontsize=8, fontweight='bold',
+                                    bbox=dict(boxstyle='round,pad=0.2', facecolor='blue', alpha=0.7))
+
+    plt.tight_layout()
+    plt.savefig(fig_path, dpi=150, bbox_inches='tight')
+    plt.close(fig)
+    print(f"Saved batch best/worst alignment visualization: {fig_path}")
+
+def angle_from_rotation(R: np.ndarray) -> float:
+    """Return rotation angle in degrees from a 2x2 rotation matrix."""
+    theta = np.arctan2(R[1, 0], R[0, 0])
+    return float(np.degrees(theta))
+
+def process_batch(model, batch, true_affine, cfg: DictConfig, device, model_name: str=None, upsampler: torch.nn.Module=None, upsampler_output_size: tuple=(32, 32)):
+    """Process a single batch and return alignment metrics."""
+    image0, image1 = batch["modality_0"], batch["modality_1"]
+    
+    # Move to device
+    image0 = image0.to(device)
+    image1 = image1.to(device)
+
+    norm_filler = batch["norm_filler"].to(device)
+    
+    # Handle random transformations if tf_difficulty is specified
+    if cfg.transforms.tf_difficulty is not None and not cfg.transforms.rotate_after:
+        # Use the transformed image1 from the dataset
+        image1 = batch["modality_1_noise"].to(device)
+        mask = batch["noise_params"]["valid_mask"].to(device)
+    elif not cfg.transforms.rotate_after:
+        # Apply rotation to images before getting embeddings if rotate_after is disabled
+        image1 = apply_affine_2d_map(image1, true_affine)
+        mask = apply_affine_2d_map(torch.ones(1, image1.shape[1], image1.shape[2]), true_affine).to(device)
+        mask = torch_erode(mask, kernel_size=3)
+        # Expand mask to 3 channels to match image
+        # mask = mask.repeat(1, 3, 1, 1)  # (B=1, C=3, H, W)
+        black_threshold = 0.5
+        image1 = torch.where(~(mask.repeat(1, 3, 1, 1) < black_threshold), image1, norm_filler[0].view(1, 3, 1, 1))
+    
+    # If not RoMa
+    if not isinstance(model, RoMaV2) and not isinstance(model, RoMaFineTuner) and not isinstance(model, RegressionMatcher):
+        # Get embeddings
+        with torch.no_grad():
+            if model_name.startswith("dino"):
+                e0 = get_last_feature_dino(model, image0.to(device), model_name)
+                if upsampler is not None and upsampler.mode == "anyup":
+                    e0 = upsampler(e0, output_size=upsampler_output_size, original_images=image0.to(device))
+                elif upsampler is not None and upsampler.mode == "bilinear":
+                    e0 = upsampler(e0, output_size=upsampler_output_size)
+
+            else:
+                e0 = model.get_embeddings(image0)  # (B, C, H, W)
+            if cfg.eval.tta_n_augs > 1:            
+                if mask.shape[0] != e0.shape[0]:
+                    mask = mask.repeat(e0.shape[0], 1, 1, 1)
+
+                if cfg.eval.use_inliers:
+                    e0, e1, all_aug_params = run_tta(e0, image1, 
+                                                        mask, model, 
+                                                        n_augs=cfg.eval.tta_n_augs,
+                                                        # filler=norm_filler[0],
+                                                        model_name=model_name,
+                                                        upsampler=upsampler,
+                                                        upsampler_output_size=upsampler_output_size,
+                                                        return_all=True
+                                                        )
+                else:
+                    best_embedding_1_aug, selected_params, best_aug_idx, votes_per_aug = run_tta(e0, image1, 
+                                                                                                mask, model, 
+                                                                                                n_augs=cfg.eval.tta_n_augs,
+                                                                                                # filler=norm_filler[0],
+                                                                                                model_name=model_name,
+                                                                                                upsampler=upsampler,
+                                                                                                upsampler_output_size=upsampler_output_size
+                                                                                                )
+                    e1 = best_embedding_1_aug
+
+                aug_step = 360 / cfg.eval.tta_n_augs
+                gt_rot = batch["noise_params"]["angle"].to(device) if "noise_params" in batch else torch.tensor([cfg.transforms.angle]*e0.shape[0]).to(device)
+                gt_aug = ((cfg.eval.tta_n_augs+(360-gt_rot+aug_step/2)//aug_step)%cfg.eval.tta_n_augs).to(torch.int32)
+
+                # accuracy_tta = ((best_aug_idx - gt_aug)==0).sum()/len(best_aug_idx)
+                # print(f"TTA Accuracy: {accuracy_tta}")
+                # print(f"Best Augmentation Index: {best_aug_idx}")
+                # print(f"Ground Truth Augmentation Index: {gt_aug}")
+            else:
+                if model_name.startswith("dino"):
+                    e1 = get_last_feature_dino(model, image1.to(device), model_name)
+                    e1 = upsampler(image1.to(device), e1, output_size=upsampler_output_size)
+                else:
+                    e1 = model.get_embeddings(image1)  # (B, C, H, W)
+    
+    batch_size = image0.shape[0]
+    batch_results = []
+    
+    for i in range(batch_size):
+        try:
+            ####################################################################################
+            # Compute the actual affine transformation matrix
+            ####################################################################################
+            if cfg.transforms.tf_difficulty is not None and "noise_params" in batch:
+                # Use the random transformation parameters from the dataset
+                actual_angle = float(batch["noise_params"]["angle"][i].cpu().numpy())
+                actual_tx = float(batch["noise_params"]["translate"][1][i].cpu().numpy())
+                actual_ty = float(batch["noise_params"]["translate"][0][i].cpu().numpy())
+                actual_scale = float(batch["noise_params"]["scale"][i].cpu().numpy())
+                
+                # Create the actual affine transformation matrix
+                theta_actual = np.deg2rad(actual_angle)
+                R_actual = np.array([[np.cos(theta_actual), -np.sin(theta_actual)],
+                                [np.sin(theta_actual),  np.cos(theta_actual)]])
+                S_actual = np.array([[actual_scale, 0], [0, actual_scale]])
+                t_actual = np.array([actual_tx, actual_ty])
+                A_actual = R_actual @ S_actual
+                actual_affine = np.array([[A_actual[0, 0], A_actual[0, 1], t_actual[1]/(cfg.data.image_size[1]/2)],
+                                        [A_actual[1, 0], A_actual[1, 1], t_actual[0]/(cfg.data.image_size[0]/2)]])
+                
+            else:
+                # Use deterministic transformation parameters
+                actual_angle = cfg.transforms.angle
+                actual_tx = cfg.transforms.tx
+                actual_ty = cfg.transforms.ty
+                actual_scale = cfg.transforms.scale
+                actual_affine = true_affine
+
+            if isinstance(model, RoMaV2) or isinstance(model, RoMaFineTuner) or isinstance(model, RegressionMatcher):
+                ####################################################################################
+                # MATCHING WITH ROMA
+                ####################################################################################
+                version = "roma_v2" if isinstance(model, RoMaV2) else "roma_v1"
+                filter_by_certainty = cfg.eval.get('filter_by_certainty', True)  # Default to True for backward compatibility
+                
+                if cfg.eval.tta_n_augs > 1:
+                    # Use TTA: rotate image0 multiple times and select matches
+                    idx0, idx1 = run_roma_tta(image0[i], image1[i], model, device, 
+                                            n_augmentations=cfg.eval.tta_n_augs,
+                                            filter_by_certainty=filter_by_certainty,
+                                            version=version)
+                else:
+                    with torch.no_grad():
+                        if version == "roma_v2":
+                            preds = model.match(norm_tensor_to_pil(image0[i]), norm_tensor_to_pil(image1[i]))
+                            matches, overlaps, precision_AtoB, precision_BtoA = model.sample(preds)
+
+                            # Convert to pixel coordinates (RoMaV2 produces matches in [-1,1]x[-1,1])
+                            idx0, idx1 = model.to_pixel_coordinates(matches, image0[i].shape[1], image0[i].shape[2], image1[i].shape[1], image1[i].shape[2])
+                        elif version == "roma_v1":
+                            preds, certainty = model.match(norm_tensor_to_pil(image0[i]), norm_tensor_to_pil(image1[i]))
+                            matches, certainty = model.sample(preds, certainty)
+
+                            # Convert to pixel coordinates (RoMaV2 produces matches in [-1,1]x[-1,1])
+                            idx0, idx1 = model.to_pixel_coordinates(matches, image0[i].shape[1], image0[i].shape[2], image1[i].shape[1], image1[i].shape[2])
+
+                H, W = image0[i].shape[1], image0[i].shape[2]
+                ####################################################################################
+
+                center = np.array([H//2, W//2])
+                # Check if we have multiple augmentations (shape is 3D)
+                has_multiple_augs = isinstance(idx0, torch.Tensor) and idx0.dim() == 3
+                
+                if cfg.eval.use_gt_correspondances:
+                    if has_multiple_augs and not filter_by_certainty:
+                        # Multiple augmentations - apply to all
+                        idx1_list = []
+                        for aug_idx in range(idx0.shape[0]):
+                            idx0_aug = idx0[aug_idx].cpu()
+                            # Filter out NaN points
+                            valid_mask = ~(torch.isnan(idx0_aug).any(dim=1))
+                            if valid_mask.sum() > 0:
+                                idx0_valid = idx0_aug[valid_mask]
+                                idx1_aug = apply_affine_2d_points(idx0_valid, actual_affine, center=center)
+                                # Create full idx1 with NaN padding
+                                idx1_full = torch.full((idx0_aug.shape[0], 2), float('nan'), device=idx1_aug.device, dtype=idx1_aug.dtype)
+                                idx1_full[valid_mask] = idx1_aug
+                                idx1_list.append(idx1_full)
+                            else:
+                                idx1_list.append(torch.full((idx0_aug.shape[0], 2), float('nan'), device=idx0_aug.device, dtype=idx0_aug.dtype))
+                        idx1 = torch.stack(idx1_list)
+                    else:
+                        # Single set of correspondences
+                        if has_multiple_augs:
+                            # Shouldn't happen if filter_by_certainty is True, but handle it
+                            raise Exception(f"ERROR: Multiple augmentations found but filter_by_certainty is True")
+                            idx0 = idx0[0]  # Take first augmentation
+                        idx1 = apply_affine_2d_points(idx0.cpu(), actual_affine, center=center)
+                
+                # Estimate affine transformation
+                if has_multiple_augs and not filter_by_certainty:
+                    # Use multiple augmentations and pick best by inliers
+                    aff_est, best_aug_idx, n_inliers = estimate_affine_matrix_multiple(
+                        idx0.cpu(), idx1.cpu(), center=center, method=cfg.eval.method
+                    )
+                else:
+                    # Standard single estimation
+                    if has_multiple_augs:
+                        # Shouldn't happen, but take first augmentation if it does
+                        idx0 = idx0[0]
+                        idx1 = idx1[0]
+                    aff_est = estimate_affine_matrix(idx0.cpu(), idx1.cpu(), center=center, method=cfg.eval.method)
+
+            else:
+                ####################################################################################
+                # MATCHING WITH EMBEDDINGS
+                ####################################################################################
+                if cfg.transforms.rotate_after:
+                    e1_rot = apply_affine_2d_map(e1[i], actual_affine)
+                    if "noise_params" in batch:
+                        mask = batch["noise_params"]["valid_mask"][i].to(device)
+                    else:
+                        mask = apply_affine_2d_map(torch.ones(1, e1.shape[2], e1.shape[3]), actual_affine)
+                        mask = torch_erode(mask, kernel_size=3)
+                else:
+                    e1_rot = e1[i]
+                    mask = None
+
+
+                if cfg.eval.use_inliers:
+                    H, W = e1_rot.shape[1], e1_rot.shape[2]
+                    e_center = np.array([H//2, W//2])
+                    e0_rot = e0[i]
+                    e1_rot = e1_rot
+                    idx0, idx1 = [], []
+                    for aug_idx in range(e1_rot.shape[0]):
+                        i0, _, i1, _ = find_nn(e0_rot, e1_rot[aug_idx], mask=mask, top_k=100)
+
+                        params = {
+                            "angle": torch.tensor(all_aug_params[aug_idx]["angle"]),
+                            "scale": torch.tensor(1.0),
+                            "translate_x": torch.tensor(0.0),
+                            "translate_y": torch.tensor(0.0),
+                        }
+                        aff = params_to_affine_matrix(params)
+                        inv_aff = inverse_affine_matrix(aff)
+
+                        i1 = apply_affine_2d_points(
+                            i1, inv_aff, center=e_center
+                        )
+
+                        idx0.append(i0)
+                        idx1.append(i1)
+
+                    idx0 = torch.stack(idx0)
+                    idx1 = torch.stack(idx1)
+                    aff_est, best_aug_idx, n_inliers = estimate_affine_matrix_multiple(
+                        idx0.cpu(), idx1.cpu(), center=e_center, method=cfg.eval.method
+                    )
+                    # selected_params_i = extract_selected_params([best_aug_idx], all_aug_params, mask, device)
+                else:
+                    # Find nearest neighbors
+                    if upsampler is not None and upsampler.mode == "anyup":
+                        e0_rot = upsampler(e0[i].unsqueeze(0), output_size=upsampler_output_size, original_images=image0[i].unsqueeze(0).to(device)).squeeze(0)
+                        e1_rot = upsampler(e1_rot.unsqueeze(0), output_size=upsampler_output_size, original_images=image1[i].unsqueeze(0).to(device)).squeeze(0)
+                    elif upsampler is not None and upsampler.mode == "bilinear":
+                        e0_rot = upsampler(e0[i].unsqueeze(0), output_size=upsampler_output_size).squeeze(0)
+                        e1_rot = upsampler(e1_rot.unsqueeze(0), output_size=upsampler_output_size).squeeze(0)
+                    else:
+                        e0_rot = e0[i]
+                        e1_rot = e1_rot
+
+                    idx0, _, idx1, _ = find_nn(e0_rot, e1_rot, mask=mask, top_k=100)
+
+                    H, W = e1_rot.shape[1], e1_rot.shape[2]
+                    ####################################################################################
+
+
+                    center = np.array([H//2, W//2])
+                    if cfg.eval.use_gt_correspondances:
+                        idx1 = apply_affine_2d_points(idx0.cpu(), actual_affine, center=center)
+                    
+                    # Estimate affine transformation
+                    aff_est = estimate_affine_matrix(idx0.cpu(), idx1.cpu(), center=center, method=cfg.eval.method)
+
+            if (cfg.eval.tta_n_augs > 1 
+                and not isinstance(model, RoMaV2) and 
+                not isinstance(model, RoMaFineTuner) and 
+                not isinstance(model, RegressionMatcher) and 
+                not cfg.eval.use_gt_correspondances and 
+                not cfg.eval.use_inliers):
+                params_i = {
+                    "angle": selected_params["angle"][i].cpu().numpy(),
+                    "scale": selected_params["scale"][i].cpu().numpy(),
+                    "translate_x": selected_params["translate"][i][1].cpu().numpy(),
+                    "translate_y": selected_params["translate"][i][0].cpu().numpy(),
+                }
+                aff_correcting_aug = params_to_affine_matrix(params_i)
+                aff_est = compose_affine_matrices(inverse_affine_matrix(aff_correcting_aug), aff_est).cpu().numpy()
+            
+            # Calculate estimated rotation angle
+            theta_est = angle_from_rotation(aff_est[:2, :2])
+            
+            # Evaluate corner alignment
+            eval_results = evaluate_corner_alignment(
+                actual_affine, aff_est, 
+                img_shape=(256, 256), # Harcode image shape for consistency in evaluations
+                threshold=cfg.eval.threshold
+            )
+            
+            # Store results for this sample
+            sample_result = {
+                'batch_idx': i,
+                'rotate_after': cfg.transforms.rotate_after,
+                'tf_difficulty': cfg.transforms.tf_difficulty if cfg.transforms.tf_difficulty else 'deterministic',
+                'true_rotation': actual_angle,
+                'estimated_rotation': theta_est,
+                'rotation_error': abs(actual_angle - theta_est),
+                'true_translation_x': actual_tx,
+                'true_translation_y': actual_ty,
+                'true_scale': actual_scale,
+                'mean_distance': eval_results['mean_distance'],
+                'max_distance': eval_results['max_distance'],
+                'rms_error': eval_results['rms_error'],
+                'median_error': eval_results['median_error'],
+                'corner_distances': eval_results['distances'].tolist(),
+                'corners_original': eval_results['corners_original'].tolist(),
+                'corners_gt': eval_results['corners_gt'].tolist(),
+                'corners_pred': eval_results['corners_pred'].tolist(),
+                'threshold': cfg.eval.threshold,
+                'aff_est': aff_est.tolist() if isinstance(aff_est, np.ndarray) else aff_est,
+                'actual_affine': actual_affine.tolist() if isinstance(actual_affine, np.ndarray) else actual_affine
+            }
+            
+            # Add accuracy metrics for each threshold
+            for key, value in eval_results.items():
+                if key.startswith('accuracy@'):
+                    sample_result[key] = value
+            
+            batch_results.append(sample_result)
+            
+        except Exception as e:
+            print(f"Error processing sample {i} in batch: {e}")
+            # Add error entry
+            sample_result = {
+                'batch_idx': i,
+                'rotate_after': cfg.transforms.rotate_after,
+                'tf_difficulty': cfg.transforms.tf_difficulty if cfg.transforms.tf_difficulty else 'deterministic',
+                'true_rotation': np.nan,
+                'estimated_rotation': np.nan,
+                'rotation_error': np.nan,
+                'true_translation_x': np.nan,
+                'true_translation_y': np.nan,
+                'true_scale': np.nan,
+                'accuracy': np.nan,
+                'mean_distance': np.nan,
+                'max_distance': np.nan,
+                'rms_error': np.nan,
+                'median_rms_error': np.nan,
+                'median_error': np.nan,
+                'corner_distances': [np.nan, np.nan, np.nan, np.nan],
+                'corners_original': None,
+                'corners_gt': None,
+                'corners_pred': None,
+                'threshold': cfg.eval.threshold,
+                'error': str(e),
+                'aff_est': None,
+                'actual_affine': None
+            }
+            batch_results.append(sample_result)
+
+        torch.cuda.empty_cache()
+        gc.collect()
+        # print(f"Accuracy: {batch_results[-1]['accuracy']}")
+    return batch_results
+
+@hydra.main(config_path="../../configs", config_name="evaluate_alignment", version_base="1.3")
+def main(cfg: DictConfig) -> None:
+    # Load environment variables
+    load_dotenv()
+    output_csv_abs = to_absolute_path(cfg.logging.output_csv)
+    os.makedirs(os.path.dirname(output_csv_abs), exist_ok=True)
+
+    # Resolve device
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    if hasattr(cfg, "runtime") and getattr(cfg.runtime, "device", None) in ("cuda", "cpu"):
+        device = cfg.runtime.device
+
+    print(f"Using device: {device}")
+
+    # Load model
+    upsampler = None
+    upsampler_type = cfg.model.kwargs.get("upsampler_type", None)
+
+    # Load upsampler
+    if upsampler_type is not None:
+        if upsampler_type == "anyup":
+            anyup = torch.hub.load('wimmerth/anyup', 'anyup_multi_backbone', use_natten=False)
+            upsampler = MyUpsampler(mode="anyup", neural_upsampler=anyup)
+            upsampler.to(device)
+            upsampler.eval()
+        elif upsampler_type == "bilinear":
+            upsampler = MyUpsampler(mode="bilinear")
+            upsampler.to(device)        
+
+    if cfg.model.checkpoint == "roma_v2":
+        dinov2_weights_path = os.getenv("DINO_ROMA_WEIGHTS_PATH", None)
+        dinov2_weights_path = to_absolute_path(dinov2_weights_path) if dinov2_weights_path is not None else None
+        dinov2_weights = torch.load(dinov2_weights_path, map_location="cpu") if dinov2_weights_path is not None else None
+        # weights_path = os.getenv("ROMA_V2_WEIGHTS_PATH", None)
+        # weights_path = to_absolute_path(weights_path) if weights_path is not None else None
+        # weights = torch.load(weights_path, map_location="cpu") if weights_path is not None else None
+        # roma_v2_cfg = RoMaV2.Cfg()
+        # model = RoMaV2(cfg=roma_v2_cfg) 
+        model = RoMaV2() 
+
+        if cfg.model.kwargs.get("roma_mmfe_checkpoint", None) is not None:
+            # raise ValueError("RoMaV2 with MMFE backbone is not supported yet")
+            backbone = ContrastiveLearningModule.load_from_checkpoint(
+                checkpoint_path=to_absolute_path(cfg.model.kwargs.roma_mmfe_checkpoint), 
+                map_location=device, 
+                load_dino_weights=False,
+                weights_only=False
+            )
+
+            model.f = RoMaBackboneWrapper(backbone, in_dim=32, out_dim=1024, projection="bilinear")
+
+        model.to(device)
+        model.eval()
+        model.compile()
+    
+
+    elif cfg.model.checkpoint == "roma_v1":
+        model = roma_indoor(device=device)
+        model.to(device)
+        model.eval()
+
+    elif cfg.model.checkpoint.startswith("dinov3"):
+        dino_weights_path = os.getenv("DINOV3_WEIGHTS_PATH", None)
+        dino_weights_path = to_absolute_path(dino_weights_path) if dino_weights_path is not None else None
+        model = load_dino(cfg.model.checkpoint, load_dino_weights=True, dino_weights_path=dino_weights_path)
+        # romav2 = RoMaV2()
+        # model = romav2.f
+        model.to(device)
+        model.eval()        
+    
+    elif cfg.model.checkpoint.startswith("dinov2"):
+        dino_weights_path = os.getenv("DINOV2_WEIGHTS_PATH", None)
+        dino_weights_path = to_absolute_path(dino_weights_path) if dino_weights_path is not None else None
+        model = load_dino(cfg.model.checkpoint, load_dino_weights=True, dino_weights_path=dino_weights_path)
+        model.to(device)
+        model.eval()
+
+    elif "finetune" in cfg.model.checkpoint:
+        model = RoMaFineTuner.load_from_checkpoint(
+            checkpoint_path=to_absolute_path(cfg.model.checkpoint), 
+            map_location=device, 
+            weights_only=False,
+            mmfe_roma_checkpoint_path=cfg.model.kwargs.get("roma_mmfe_checkpoint", None)
+        )
+        model.to(device)
+        model.eval()
+    else:
+        if not cfg.model.checkpoint:
+            raise ValueError("model.checkpoint must be provided (path to .ckpt)")
+        model = ContrastiveLearningModule.load_from_checkpoint(
+            checkpoint_path=to_absolute_path(cfg.model.checkpoint), 
+            map_location=device, 
+            load_dino_weights=False,
+            weights_only=False
+        )
+        model.to(device)
+        model.eval()
+
+    if cfg.eval.batch_size > 4 and cfg.model.checkpoint in ["dinov3_vitb16", "dinov2_vitb14"] and cfg.model.kwargs.get("use_dino_res", False):
+        # Reduce the batchsize to avoid OOM
+        OmegaConf.set_struct(cfg.eval, False)
+        new_bs = cfg.eval.batch_size // 4
+        new_bs = new_bs if new_bs > 1 else 1
+        cfg.eval.batch_size = cfg.eval.batch_size // 4
+
+    # Create validation dataset and dataloader
+    if (cfg.model.checkpoint == "roma_v2" or cfg.model.checkpoint == "roma_v1" or
+        (cfg.model.checkpoint in ["dinov3_vitb16", "dinov2_vitb14"] and cfg.model.kwargs.get("use_dino_res", False)) or
+        "finetune" in cfg.model.checkpoint):
+        new_H = 560
+        new_W = 560
+        OmegaConf.set_struct(cfg.data, False)
+        cfg.data.image_size = [new_H, new_W]
+
+    val_dataset = create_val_dataset(cfg)
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=cfg.eval.batch_size,
+        shuffle=False,
+        num_workers=cfg.eval.num_workers,
+        pin_memory=True,
+        drop_last=False,
+    )
+
+    # Create true affine transformation matrix (only for deterministic mode)
+    if cfg.transforms.tf_difficulty is None:
+        theta = np.deg2rad(cfg.transforms.angle)
+        
+        # Create rotation matrix
+        R = np.array([[np.cos(theta), -np.sin(theta)],
+                      [np.sin(theta),  np.cos(theta)]])
+        
+        # Create scale matrix (uniform scaling)
+        S = np.array([[cfg.transforms.scale, 0],
+                      [0, cfg.transforms.scale]])
+        
+        # Create translation vector
+        t = np.array([cfg.transforms.tx, cfg.transforms.ty])
+        
+        # Combine rotation and scale: A = R * S
+        A = R @ S
+        
+        # Create 2x3 affine transformation matrix
+        true_affine = np.array([[A[0, 0], A[0, 1], t[0]],
+                               [A[1, 0], A[1, 1], t[1]]])
+        
+        print(f"Applied deterministic affine transforms - Rotation: {cfg.transforms.angle:.2f}°, Translation: ({cfg.transforms.tx:.1f}, {cfg.transforms.ty:.1f}), Scale: {cfg.transforms.scale:.2f}")
+    else:
+        true_affine = None  # Will be created per sample from random transformations
+        print(f"Using random transformations with difficulty: {cfg.transforms.tf_difficulty}")
+    
+    print(f"Rotate after embeddings: {cfg.transforms.rotate_after}")
+    print(f"Processing {len(val_loader)} batches with batch size {cfg.eval.batch_size}")
+    if cfg.eval.max_batches:
+        print(f"Limited to {cfg.eval.max_batches} batches")
+
+    # Process all batches
+    all_results = []
+    batch_count = 0
+    
+    for batch_idx, batch in enumerate(tqdm(val_loader)):
+        if cfg.eval.max_batches and batch_idx >= cfg.eval.max_batches:
+            break
+            
+        print(f"Processing batch {batch_idx + 1}/{len(val_loader)}")
+        
+        batch_results = process_batch(model, batch, true_affine, cfg, device, model_name=cfg.model.checkpoint, 
+                                      upsampler=upsampler, upsampler_output_size=tuple(cfg.model.kwargs.upsampler_output_size) if cfg.model.kwargs.get("upsampler_output_size", None) is not None else None)
+        
+        # Add batch information to results
+        for result in batch_results:
+            result['global_batch_idx'] = batch_idx
+            result['global_sample_idx'] = batch_idx * cfg.eval.batch_size + result['batch_idx']
+        
+        all_results.extend(batch_results)
+        batch_count += 1
+        
+        # Save best/worst alignment visualizations for this batch
+        # save_best_worst_alignments(batch, batch_results, batch_idx, cfg, threshold=3)
+
+    # Create DataFrame and save to CSV
+    df = pd.DataFrame(all_results)
+    
+    # Save to CSV
+    df.to_csv(output_csv_abs, index=False)
+    
+    # Print summary statistics
+    print(f"\n=== Evaluation Summary ===")
+    print(f"Processed {len(all_results)} samples across {batch_count} batches")
+    print(f"Results saved to: {output_csv_abs}")
+    
+    # Find accuracy columns (format: accuracy@{threshold})
+    accuracy_cols = [col for col in df.columns if col.startswith('accuracy@')]
+    
+    if len(accuracy_cols) > 0:
+        # Filter valid results (non-NaN for any accuracy column)
+        valid_results = df.dropna(subset=accuracy_cols)
+        
+        if len(valid_results) > 0:
+            print(f"\n=== Summary Statistics ===")
+            print(f"Valid samples: {len(valid_results)}")
+            
+            # Print accuracy statistics for each threshold
+            for col in accuracy_cols:
+                threshold_val = col.replace('accuracy@', '')
+                print(f"Mean accuracy@{threshold_val}: {valid_results[col].mean():.2f}% ± {valid_results[col].std():.2f}%")
+            
+            print(f"Mean rotation error: {valid_results['rotation_error'].mean():.2f}° ± {valid_results['rotation_error'].std():.2f}°")
+            print(f"Mean corner distance: {valid_results['mean_distance'].mean():.2f} ± {valid_results['mean_distance'].std():.2f} pixels")
+            print(f"Mean RMS error: {valid_results['rms_error'].mean():.2f} ± {valid_results['rms_error'].std():.2f} pixels")
+            print(f"Median RMS error: {np.median(valid_results['rms_error']):.2f} pixels")
+            print(f"Mean median error: {valid_results['median_error'].mean():.2f} ± {valid_results['median_error'].std():.2f} pixels")
+            
+            # Accuracy distribution for each threshold
+            accuracy_ranges = [(0, 25), (25, 50), (50, 75), (75, 100)]
+            for col in accuracy_cols:
+                threshold_val = col.replace('accuracy@', '')
+                print(f"\nAccuracy@{threshold_val} distribution:")
+                for low, high in accuracy_ranges:
+                    count = len(valid_results[(valid_results[col] >= low) & (valid_results[col] < high)])
+                    pct = count / len(valid_results) * 100
+                    print(f"  {low}-{high}%: {count} samples ({pct:.1f}%)")
+                
+                # Perfect accuracy count for this threshold
+                perfect_count = len(valid_results[valid_results[col] == 100])
+                print(f"  Perfect alignment@{threshold_val} (100%): {perfect_count} samples ({perfect_count/len(valid_results)*100:.1f}%)")
+        else:
+            print("No valid results obtained!")
+    else:
+        print("No accuracy columns found!")
+
+if __name__ == "__main__":
+    main()

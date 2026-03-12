@@ -1,0 +1,96 @@
+defaults:
+  - _self_
+
+# Data configuration
+data:
+  # RoMa typically operates at higher resolutions (e.g., 560x560 or 448x448)
+  image_size: [560, 560]
+  
+  # Datasets (configured as per your example)
+  cubicasa:
+    path: data/cubicasa5k/
+    train: data/cubicasa5k/train.txt
+    val: data/cubicasa5k/val.txt
+  
+  # Add other datasets as needed (set to null if unused)
+  structured3d:
+    path: null
+    train: null
+    val: null
+  aria_synthenv:
+    path: null
+    train: null
+    val: null
+  swiss_dwellings:
+    path: null
+    train: null
+    val: null
+  zillow:
+    path: null
+    train: null
+    val: null
+
+  # Transformation configuration (Used for creating the noise/GT)
+  # These control the generation of modality_0_noise and modality_1_noise
+  affine_transform:
+    common_degrees: 180
+    common_translate: [0.2, 0.2]
+    common_scale:  [0.8, 1.2]
+
+    noise_degrees: 180
+    noise_translate: [0.2, 0.2]
+    noise_scale:  [0.8, 1.2] # RoMa handles scale changes well, but don't go too extreme
+
+# Training loop configuration
+train:
+  batch_size: 4 # Reduced batch size as RoMa + dense features is memory heavy
+  epochs: 100
+  num_workers: 4
+  gpus: 1
+  precision: 16
+  accumulate_grad_batches: 4 # Increase effective batch size
+  seed: 42
+  deterministic: false
+  early_stopping: true
+  patience: 15
+  device: cuda
+
+# Model configuration
+model:
+  name: romav2
+  freeze_backbone: true
+  
+  # RoMa specific args could go here if your LightningModule supports them
+  # coarse_resolution: 560
+
+# Loss configuration
+loss:
+  type: roma_robust_l1
+  weights:
+    regression: 1.0
+    confidence: 1.0
+
+# Optimizer configuration
+optim:
+  lr: 1.0e-4
+  weight_decay: 1.0e-4
+
+# Scheduler configuration
+scheduler:
+  use: true
+  milestones: [10, 20] # Or whatever logic RoMaFineTuner uses
+
+# Logging & checkpointing
+logging:
+  output_dir: outputs/roma_finetune
+  project_name: roma_floorplan_finetuning
+  experiment_name: run01_roma_dinov2_${data.image_size[0]}px_noise${data.affine_transform.noise_degrees}
+  save_top_k: 3
+  wandb: false
+
+# Hydra runtime configuration
+hydra:
+  run:
+    dir: ${logging.output_dir}/${now:%Y-%m-%d_%H-%M-%S}
+  job:
+    chdir: true

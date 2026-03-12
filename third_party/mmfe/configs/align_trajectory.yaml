@@ -1,0 +1,48 @@
+# Configuration for trajectory alignment visualization
+# Usage: python scripts/visualization_scripts/align_trajectory.py
+
+defaults:
+  - _self_
+
+# Model configuration
+model:
+  # Required: path to model checkpoint for alignment estimation
+  checkpoint: null  # e.g., "outputs/contrastive/checkpoints/remote/.../model.ckpt"
+  n_tta: 8
+
+# Data configuration
+data:
+  image_size: [256, 256]  # (H, W) for floorplan and modalities
+  
+  aria_synthenv:
+    # Required: path to Aria SyntheticEnv dataset (rendered_data directory)
+    path: null  # e.g., "data/aria/SyntheticEnv/rendered_data/"
+    
+    # Required: path to train or val file with scene IDs
+    train: null  # e.g., "data/aria/SyntheticEnv/train.txt"
+    # val: null  # Alternative: use val.txt instead of train.txt
+    
+    # Number of FPV images per sample (script will load all available, but this affects dataset loading)
+    n_fpv_images: 1
+  
+  # Affine transformation configuration
+  # These control how the modalities are transformed during dataset loading
+  affine_transform:
+    # Common transforms applied to both modalities
+    common_degrees: 0  # Rotation degrees (0 for no rotation, or range like [0, 180])
+    common_translate: [0.0, 0.0]  # Translation as fraction of image size [tx, ty]
+    common_scale: [1.0, 1.0]  # Scale range [min, max] or single value
+    
+    # Noise transforms applied only to modality_1 (window)
+    # Set noise_degrees to null to disable noise transformation
+    noise_degrees: 180  # Rotation degrees for noise (e.g., 180 for full rotation, or range)
+    noise_translate: [0.2, 0.2]  # Translation as fraction of image size [tx, ty]
+    noise_scale: [1.0, 1.0]  # Scale range [min, max]
+
+# Hydra runtime configuration
+hydra:
+  run:
+    dir: outputs/visualizations/align_trajectory/${now:%Y-%m-%d_%H-%M-%S}
+  job:
+    chdir: true
+

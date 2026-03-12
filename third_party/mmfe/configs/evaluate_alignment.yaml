@@ -1,0 +1,104 @@
+# @package _global_
+
+defaults:
+  - _self_
+
+# Model configuration
+model:
+  # checkpoint: "outputs/contrastive/checkpoints/remote/49075485_proj_dim_32_dino_MoGe1_common_180_[0.0,0.0]_[1.0,1.0]_noise_25_[0.2,0.2]_[0.5,1.5]_train_eq_true/49075485_proj_dim_32_dino_MoGe1_common_180_[0.0,0.0]_[1.0,1.0]_noise_25_[0.2,0.2]_[0.5,1.5]_train_eq_true-val_loss=0.0021-epoch=08.ckpt"  # Required: path to model checkpoint
+  # checkpoint: "roma_v2"
+  # checkpoint: "roma_v1"
+  # checkpoint: "dinov3_vitb16"
+  # checkpoint: "dinov2_vitb14"
+  checkpoint: "/local/home/xanadon/mmfe/outputs/roma_finetune/remote_checkpoints/51884154/last.ckpt"
+  # checkpoint: "/local/home/xanadon/mmfe/outputs/roma_finetune/remote_checkpoints/51884157/last.ckpt"
+  kwargs:
+    # upsampler_output_size: [32, 32] # Only for DINO models
+    # upsampler_type: "anyup_multi_backbone"
+    # upsampler_type: "bilinear"
+    upsampler_type: null
+    upsampler_output_size: null # [32, 32] # Only for DINO models
+    roma_mmfe_checkpoint: null # "outputs/contrastive/checkpoints/remote/49075485_proj_dim_32_dino_MoGe1_common_180_[0.0,0.0]_[1.0,1.0]_noise_25_[0.2,0.2]_[0.5,1.5]_train_eq_true/49075485_proj_dim_32_dino_MoGe1_common_180_[0.0,0.0]_[1.0,1.0]_noise_25_[0.2,0.2]_[0.5,1.5]_train_eq_true-val_loss=0.0021-epoch=08.ckpt" # path to mmfe checkpoint
+    use_dino_res: false
+
+# Data configuration
+data:
+  cubicasa:
+    # path: "data/cubicasa5k/"
+    # val: "data/cubicasa5k/val.txt"
+    path: null
+    val: null
+  structured3d:
+    # path: "data/structure3D/Structured3D_bbox/Structured3D/"
+    # val: "data/structure3D/val.json"
+    path: null
+    val: null
+  aria_synthenv:
+    # path: "data/aria/SyntheticEnv/rendered_data/"
+    # val: "data/aria/SyntheticEnv/val.txt"
+    path: null
+    val: null
+  swiss_dwellings:
+    # path: "data/SwissDwellings/modified-swiss-dwellings-v2/all_render/"
+    # val: "data/SwissDwellings/modified-swiss-dwellings-v2/val.txt"
+    path: null
+    val: null
+  zillow:
+    # path: "data/zind/rendered_data/"
+    # val: "data/zind/val.txt"
+    path: null
+    val: null
+  scannet:
+    # path: "data/scannet/rendered/"
+    # val: "data/scannet/scannetv2_val.txt"
+    path: null
+    val: null
+  image_size: [256, 256]
+
+# Transformation configuration
+transforms:
+  mean: [0.485, 0.456, 0.406]
+  std: [0.229, 0.224, 0.225]
+
+  # Deterministic transformation parameters (used when tf_difficulty is null)
+  angle: 0.0  # Rotation angle in degrees
+  tx: 0.1      # Translation in x direction (pixels)
+  ty: 0.1      # Translation in y direction (pixels)
+  scale: 1.0   # Uniform scale factor
+  
+  # Random transformation difficulty (null for deterministic, or 'easy', 'medium', 'hard', 'rot_only')
+  tf_difficulty: null # "hard"
+  
+  # Whether to rotate embeddings after feeding to model (vs before)
+  rotate_after: false
+
+# Evaluation configuration
+eval:
+  # Batch processing
+  batch_size: 1
+  num_workers: 8
+  max_batches: null  # null for all batches, or specify number
+  
+  # Alignment evaluation
+  threshold: [3, 5, 10.0]  # Distance threshold for corner alignment accuracy (pixels)
+  method: "ransac"  # Method for affine matrix estimation: 'ransac', 'lmeds', 'best'
+  
+  # Test Time Augmentation
+  tta_n_augs: 8  # Number of augmentations for TTA (1 to disable)
+  
+  # Ground truth correspondences
+  use_gt_correspondances: false  # Use ground truth correspondences instead of estimated ones
+
+  # Filter by certainty
+  filter_by_certainty: false  # Filter by certainty (only for RoMa)
+
+  # Use inliers
+  use_inliers: false  # Use inliers instead of voting for the best augmentation
+
+# Runtime configuration
+runtime:
+  device: "cuda"  # Device to use: 'cuda' or 'cpu'
+
+# Logging configuration
+logging:
+  output_csv: "outputs/metrics/alignment_evaluation.csv"

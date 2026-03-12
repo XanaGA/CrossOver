@@ -1,0 +1,100 @@
+# Configuration for training global descriptor models
+# Usage: python scripts/training_scripts/train_global_desc.py
+
+# Backbone configuration
+backbone:
+  name: "dinov2_vitb14"  # backbone architecture (salad, vgg16, dinov3_vitb16, etc.)
+  pretrained: true  # use pretrained weights
+  freeze: salad  # freeze backbone parameters
+  kwargs:
+    # local_path_backbone: "/local/home/xanadon/dinov2"
+    # dino_weights_path: null
+
+# Global descriptor configuration
+descriptor:
+  type: "salad"  # type of global descriptor (salad, netvlad, gem, avg, max)
+  output_dim: 512  # final output dimension of global descriptor
+  kwargs:
+    pretrained: true
+    # local_path_salad: "/local/home/xanadon/mmfe/third_parties/salad"
+    # salad_weights_path: "/local/home/xanadon/mmfe/data/checkpoints/salad_checkpoints/dino_salad.ckpt"
+
+# Loss configuration
+loss:
+  type: MultiSimilarityLoss # infonce1d | MultiSimilarityLoss
+  kwargs:
+    miner_name: MultiSimilarityMiner
+    temperature: 0.07  # temperature for InfoNCE loss
+    epsilon: null
+    max_negatives: null
+
+# Training configuration
+train:
+  batch_size: 8
+  epochs: 100
+  num_workers: 4
+  seed: 42
+  deterministic: false
+  precision: 16  # mixed precision training
+  accumulate_grad_batches: 1
+  early_stopping_patience: 20  # 0 to disable
+  gpus: 1
+
+# Optimizer configuration
+optim:
+  lr: 1e-4
+  weight_decay: 1e-4
+
+# Scheduler configuration
+scheduler:
+  use: true
+  eta_min: 1e-6
+
+# Data configuration
+data:
+  image_size: [256, 256]  # (H, W)
+  
+  # CubiCasa5k dataset
+  cubicasa:
+    path: data/cubicasa5k/
+    train: data/cubicasa5k/train.txt
+    val: data/cubicasa5k/val.txt
+  structured3d:
+    # path: data/structure3D/Structured3D_bbox/Structured3D/
+    # train: data/structure3D/train.json
+    # val: data/structure3D/val.json
+    path: null
+    train: null
+    val: null
+  aria_synthenv:
+    # path: data/aria/SyntheticEnv/rendered_data/
+    # train: data/aria/SyntheticEnv/train.txt
+    # val: data/aria/SyntheticEnv/val.txt
+    path: null
+    train: null
+    val: null
+
+  swiss_dwellings:
+    path: data/SwissDwellings/modified-swiss-dwellings-v2/all_render/
+    train: data/SwissDwellings/modified-swiss-dwellings-v2/train.txt
+    val: data/SwissDwellings/modified-swiss-dwellings-v2/val.txt
+
+  zillow:
+    path: data/zind/rendered_data/
+    train: data/zind/train.txt
+    val: data/zind/val.txt
+
+  # Transformation configuration
+  affine_transform:
+    common_degrees: 180  # rotation degrees
+    common_translate: [0.2, 0.2]  # translation
+    common_scale: [0.5, 1.5]  # scale
+
+# Logging configuration
+logging:
+  output_dir: "outputs/global_descriptors"
+  experiment_name: local_${backbone.name}_${descriptor.type}_common_${data.affine_transform.common_degrees}_${data.affine_transform.common_translate}_${data.affine_transform.common_scale}_freeze_${backbone.freeze}
+  project_name: "global_descriptors"
+  save_top_k: 3
+  wandb: true  # enable W&B logging
+

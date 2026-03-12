@@ -1,0 +1,54 @@
+# Configuration for evaluating FPV pose estimation
+# Usage: python scripts/evaluation_scripts/evaluate_fpv_inference.py
+
+defaults:
+  - _self_
+
+# Model configuration
+model:
+  # Path to FPV model checkpoint
+  checkpoint: null  # Required: path to FPVLightningModule checkpoint
+
+# Data configuration
+data:
+  image_size: [256, 256]  # (H, W) for floorplan
+  
+  aria_synthenv:
+    path: null  # Required: path to aria rendered_data
+    val: null   # Required: path to val.txt
+    n_fpv_images: 1  # Number of FPV images per sample
+    use_depth: true
+
+# Evaluation configuration
+eval:
+  batch_size: 1  # Process one sample at a time for pose estimation
+  num_workers: 4
+  seed: 42
+  num_samples: 0  # Number of samples to evaluate (0 = all)
+  
+  # Template matching settings
+  n_candidates: 1000  # Number of random candidate poses
+  
+  # Pose refinement settings
+  refine: false  # Whether to refine pose with non-linear optimization
+
+# Runtime configuration
+runtime:
+  device: cuda  # Device to use (cuda or cpu)
+
+# Logging configuration
+logging:
+  output_dir: "outputs/metrics/fpv_inference"
+
+# Hydra runtime configuration
+hydra:
+  run:
+    dir: ${logging.output_dir}/${now:%Y-%m-%d_%H-%M-%S}
+  job:
+    chdir: true
+
+
+
+
+
+

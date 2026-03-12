@@ -1,0 +1,50 @@
+defaults:
+  - _self_
+
+# Data configuration
+data:
+  image_size: [256, 256]
+  cubicasa:
+    path: data/cubicasa5k/
+    train: data/cubicasa5k/train.txt
+    val: data/cubicasa5k/val.txt
+  structured3d:
+    path: data/structure3D/Structured3D_bbox/Structured3D/
+    train: data/structure3D/train.json
+    val: data/structure3D/val.json
+
+# Training loop configuration (used by scripts/train_steerer.py)
+train:
+  batch_size: 32
+  num_workers: 4
+  seed: 42
+  deterministic: false
+  gpus: 1
+  precision: 16
+  accumulate_grad_batches: 1
+
+  generator_rot: 45
+  num_keypoints: 1000
+  epochs: 100
+  debug: false
+
+# Logging (optional for scripts/train_steerer.py)
+logging:
+  output_dir: outputs/steerers
+  project_name: steerer_training
+  experiment_name: local_steerer
+  wandb: true
+  save_top_k: 3
+
+# Model (descriptor) checkpoint to load
+model:
+  checkpoint: "/local/home/xanadon/mmfe/outputs/contrastive/checkpoints/remote/45119373_proj_dim_32_dino_MoGe1_common_180_[0.0,0.0]_[1.0,1.0]_noise_25_[0.0,0.0]_[1.0,1.0]_train_eq_true/45119373_proj_dim_32_dino_MoGe1_common_180_[0.0,0.0]_[1.0,1.0]_noise_25_[0.0,0.0]_[1.0,1.0]_train_eq_true-val_loss=0.0013-epoch=33.ckpt"
+
+# Hydra runtime configuration (optional)
+hydra:
+  run:
+    dir: ${logging.output_dir}/${now:%Y-%m-%d_%H-%M-%S}
+  job:
+    chdir: true
+
+

@@ -1,0 +1,16 @@
+.venv/
+.mypy_cache/
+data/*
+.vscode
+*/__pycache__/
+__pycache__/
+*.egg-info/
+checkpoints/*
+*.pt
+*.pth
+outputs/*
+wandb/*
+*.pkl
+scripts/slurm/*
+build/*
+.env

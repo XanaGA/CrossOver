@@ -1,0 +1,40 @@
+# Validation config for Hydra-based validation script
+
+# Data paths and settings
+data:
+  image_size: [256, 256]
+  cubicasa:
+    path: data/cubicasa5k
+    val: data/cubicasa5k/val.txt
+  structured3d:
+    path: data/structure3D/Structured3D_bbox/Structured3D/
+    val: data/structure3D/val.json
+
+# Dataloader
+val:
+  batch_size: 32
+  num_workers: 8
+
+# Model
+model:
+  checkpoint: "/local/home/xanadon/mmfe/outputs/contrastive/checkpoints/remote/45119404_proj_dim_32_dino_MoGe1_common_180_[0.0,0.0]_[1.0,1.0]_noise_25_[0.2,0.2]_[0.5,1.5]_train_eq_true/45119404_proj_dim_32_dino_MoGe1_common_180_[0.0,0.0]_[1.0,1.0]_noise_25_[0.2,0.2]_[0.5,1.5]_train_eq_true-val_loss=0.0020-epoch=32.ckpt"  # required, absolute or relative path to .ckpt
+
+# Logging / Outputs
+logging:
+  output_csv: outputs/metrics/validation_metrics.csv
+
+# Transforms
+transforms:
+  mean: [0.485, 0.456, 0.406]
+  std: [0.229, 0.224, 0.225]
+  tf_difficulty: "hard" # "easy", "medium", or "hard", "rot_only"
+  hardcoded_rot: 10
+
+# Debug visualization
+viz_debug: false
+
+# Test Time Augmentation
+tta: 8  # Number of augmentations (1 = no TTA, >1 = TTA with rotations) 
+mode: "pre" # "pre", "post", "gt_tta", "tta"
+use_m0_as_m1: true
+

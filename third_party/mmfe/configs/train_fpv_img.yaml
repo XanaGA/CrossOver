@@ -1,0 +1,74 @@
+# Configuration for training FPV image encoders
+# Usage: python scripts/training_scripts/train_fpv_img.py
+
+defaults:
+  - _self_
+
+# Data configuration
+data:
+  image_size: [256, 256]  # (H, W) for floorplan
+  
+  aria_synthenv:
+    # path: data/aria/SyntheticEnv/rendered_data/
+    # train: data/aria/SyntheticEnv/train.txt
+    # val: data/aria/SyntheticEnv/val.txt
+    path: null
+    train: null
+    val: null
+    n_fpv_images: 1  # Number of FPV images per sample
+    use_depth: true
+
+# Training configuration
+train:
+  batch_size: 1
+  epochs: 1000
+  num_workers: 4
+  seed: 42
+  deterministic: false
+  precision: 16  # mixed precision training (16 or 32)
+  accumulate_grad_batches: 8
+  gpus: 1  # Number of GPUs to use
+  n_neg_poses: 0
+
+loss:
+  type: "frustum_regression" # frustum_regression | frustum_contrastive
+
+# Optimizer configuration
+optim:
+  lr: 1e-6
+  weight_decay: 1e-4
+
+# FPV model configuration
+fpv:
+  # Path to the frozen floorplan encoder checkpoint (from contrastive learning)
+  floorplan_checkpoint: outputs/contrastive/checkpoints/remote/49075485_proj_dim_32_dino_MoGe1_common_180_[0.0,0.0]_[1.0,1.0]_noise_25_[0.2,0.2]_[0.5,1.5]_train_eq_true/49075485_proj_dim_32_dino_MoGe1_common_180_[0.0,0.0]_[1.0,1.0]_noise_25_[0.2,0.2]_[0.5,1.5]_train_eq_true-val_loss=0.0021-epoch=08.ckpt
+  
+  # FPV image encoder configuration
+  image_encoder:
+    backbone: "resnet18"  # Backbone architecture (resnet18, resnet34, resnet50, resnet101, resnet152)
+    out_channels: 128  # Output channel dimension for feature grid
+    pretrained: true  # Use ImageNet-pretrained weights
+    freeze_backbone: false  # Freeze backbone parameters
+    backbone_kwargs: {}  # Optional kwargs for backbone initialization
+
+  # Depth prediction configuration
+  depth_pred:
+    n_depth_planes: 100
+    depth_min: 0.1
+    depth_max: 5.0
+
+# Logging configuration
+logging:
+  output_dir: "outputs/fpv_images"
+  experiment_name: "fpv_${fpv.image_encoder.backbone}_${fpv.image_encoder.out_channels}ch_${train.batch_size}bs"
+  project_name: "fpv_images"
+  save_top_k: 3  # Number of top checkpoints to save
+  wandb: true  # Enable W&B logging
+
+# Hydra runtime configuration
+hydra:
+  run:
+    dir: ${logging.output_dir}/${now:%Y-%m-%d_%H-%M-%S}
+  job:
+    chdir: true
+

@@ -1,0 +1,119 @@
+# @package _global_
+
+defaults:
+  - _self_
+
+# Model configuration
+model:
+  # Contrastive Voting
+  # checkpoint: "outputs/contrastive/checkpoints/remote/45119404_proj_dim_32_dino_MoGe1_common_180_[0.0,0.0]_[1.0,1.0]_noise_25_[0.2,0.2]_[0.5,1.5]_train_eq_true/45119404_proj_dim_32_dino_MoGe1_common_180_[0.0,0.0]_[1.0,1.0]_noise_25_[0.2,0.2]_[0.5,1.5]_train_eq_true-val_loss=0.0020-epoch=32.ckpt"  
+
+  # VGG16 NetVLAD
+  # checkpoint: "/local/home/xanadon/mmfe/outputs/global_descriptors/checkpoints/local_vgg16_netvlad_common_0_[0.0, 0.0]_[1.0, 1.0]_noise_0_[0.0, 0.0]_[1.0, 1.0]_PreClusterTrue_freeze_none-val_loss=0.0230-epoch=54.ckpt"
+  # checkpoint: "/local/home/xanadon/mmfe/outputs/global_descriptors/checkpoints/local_vgg16_netvlad_common_180_[0.2, 0.2]_[0.5, 1.5]_PreClusterTrue_freeze_none-val_loss=0.4015-epoch=90.ckpt"
+  # checkpoint: "/local/home/xanadon/mmfe/outputs/global_descriptors/checkpoints/local_vgg16_netvlad_common_180_[0.2, 0.2]_[0.5, 1.5]_PreClusterTrue_freeze_none-val_loss=1.2984-epoch=80.ckpt"
+  
+  # # DINOv3 NetVLAD
+  # checkpoint: "/local/home/xanadon/mmfe/outputs/global_descriptors/remote_chekpoints/47729850/47729850_dinov3_vitb16_netvlad_common_180_[0.2,0.2]_[0.5,1.5]_PreClustertrue_Freeze_all-val_loss=4.9345-epoch=49.ckpt"
+
+  # # MoGe DINOv3 NetVLAD
+  # checkpoint: "/local/home/xanadon/mmfe/outputs/global_descriptors/remote_chekpoints/47729819/47729819_moge_dinov3_vitb16_netvlad_common_180_[0.2,0.2]_[0.5,1.5]_PreClusterfalse_Freeze_dino-val_loss=3.0041-epoch=48.ckpt"
+
+  # MoGe MMFE NetVLAD
+  # checkpoint: "/local/home/xanadon/mmfe/outputs/global_descriptors/remote_chekpoints/49702768/49702768_mmfe_netvlad_common_180_[0.2,0.2]_[0.5,1.5]_PreClustertrue_Freeze_dino-val_loss=1.0535-epoch=46.ckpt"
+  # checkpoint: "/local/home/xanadon/mmfe/outputs/global_descriptors/remote_chekpoints/47729794/47729794_mmfe_netvlad_common_180_[0.2,0.2]_[0.5,1.5]_PreClustertrue_Freeze_all-val_loss=0.6572-epoch=43.ckpt"
+
+  # SALAD DINOv2
+  # checkpoint: "/local/home/xanadon/mmfe/outputs/global_descriptors/remote_chekpoints/47849420/47849420_salad_common_180_[0.2,0.2]_[0.5,1.5]_Freeze_salad-val_loss=0.1266-epoch=73.ckpt"
+  # checkpoint: "/local/home/xanadon/mmfe/outputs/global_descriptors/remote_chekpoints/47853216/47853216_salad_common_180_[0.2,0.2]_[0.5,1.5]_Freeze_dino-val_loss=1.1842-epoch=81.ckpt"
+
+  # SALAD DINOv3
+  # checkpoint: "/local/home/xanadon/mmfe/outputs/global_descriptors/checkpoints/local_dinov3_vitb16_salad_common_180_[0.2, 0.2]_[0.5, 1.5]_freeze_salad-val_loss=0.4236-epoch=46.ckpt"
+
+  # SALAD MMFE
+  checkpoint: "/local/home/xanadon/mmfe/outputs/global_descriptors/remote_chekpoints/51456729/51456729_mmfe_salad_common_180_[0.2,0.2]_[0.5,1.5]_Freeze_dino_ClsToken_max_pool_Loss_MultiSimilarityLoss-val_loss=0.6617-epoch=73.ckpt"
+
+  # SALAD OG
+  # checkpoint: "salad_og"
+
+  # no_train_agg: 
+  #   # backbone_chkp_path: "outputs/contrastive/checkpoints/remote/49075485_proj_dim_32_dino_MoGe1_common_180_[0.0,0.0]_[1.0,1.0]_noise_25_[0.2,0.2]_[0.5,1.5]_train_eq_true/49075485_proj_dim_32_dino_MoGe1_common_180_[0.0,0.0]_[1.0,1.0]_noise_25_[0.2,0.2]_[0.5,1.5]_train_eq_true-val_loss=0.0021-epoch=08.ckpt"
+  #   backbone_chkp_path: "/local/home/xanadon/mmfe/outputs/global_descriptors/remote_chekpoints/51616957/51616957_mmfe_salad_common_25_[0.2,0.2]_[0.5,1.5]_Freeze_all_ClsToken_max_pool_Loss_MultiSimilarityLoss-val_loss=0.8568-epoch=71.ckpt"
+  #   # descriptor_type: "gem"
+  #   descriptor_type: "global_desc"
+  #   n_augs: 8
+
+# Data configuration
+data:
+  cubicasa:
+    # path: "data/cubicasa5k/"
+    # val: "data/cubicasa5k/val.txt"
+    path: null
+    val: null
+  structured3d:
+    # path: "data/structure3D/Structured3D_bbox/Structured3D/"
+    # val: "data/structure3D/val.json"
+    path: null
+    val: null
+  aria_synthenv:
+    # path: "data/aria/SyntheticEnv/rendered_data/"
+    # val: "data/aria/SyntheticEnv/val.txt"
+    path: null
+    val: null
+  swiss_dwellings:
+    # path: "data/SwissDwellings/modified-swiss-dwellings-v2/all_render/"
+    # val: "data/SwissDwellings/modified-swiss-dwellings-v2/val.txt"
+    path: null
+    val: null
+  zillow:
+    # path: "data/zind/rendered_data/"
+    # val: "data/zind/val.txt"
+    path: null
+    val: null
+  scannet:
+    # path: "data/scannet/rendered/"
+    # val: "data/scannet/scannetv2_val.txt"
+    path: null
+    val: null
+    # modality_pairs: [["density_map_mesh", "floorplan"]]
+  image_size: [256, 256]  # (H, W)
+
+  # Transformation configuration
+  affine_transform:
+    # common_degrees: 0
+    # common_translate: [0.0, 0.0]
+    # common_scale: [1.0, 1.0]
+    common_degrees: 180
+    common_translate: [0.2, 0.2]
+    common_scale: [0.5, 1.5]
+
+# Evaluation configuration
+eval:
+  # Number of examples to evaluate
+  num_examples: 4000  # Number of examples to evaluate (N)
+  
+  # Batch processing
+  batch_size: 16  # Batch size for embedding computation
+  num_workers: 8  # Number of workers for data loading
+  
+  # Random seed
+  seed: 42  # Random seed for reproducibility
+
+# Runtime configuration
+runtime:
+  device: "cuda"  # Device to use: 'cuda' or 'cpu'
+
+# Logging configuration
+logging:
+  output_dir: "outputs/metrics/retrieval"  # Output directory for results
+
+# Retrieval mode configuration
+retrieval:
+  # mode: "voting"  # 'voting' or '1d_vectors'
+  mode: "1d_vectors"  # 'voting' or '1d_vectors'
+  mode_kwargs:
+    num_votes: 50  # Number of cells to sample for voting (M)
+  topk_metrics: [1, 5, 10]
+  num_visualizations: 50  # Number of query visualizations to save (0 to disable)
+    
+
