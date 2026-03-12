@@ -67,7 +67,7 @@ task:
   InferenceSceneRetrieval:
     val                     : [Scannet]
     modalities              : ['rgb', 'point', 'cad', 'referral']
-    scene_modalities        : ['rgb', 'point', 'referral', 'floorplan'] #, 'point']
+    scene_modalities        : ['point', 'floorplan'] # ['rgb', 'point', 'referral', 'floorplan'] 
     ckpt_path               : /home/xavi/CrossOver/checkpoints/model.safetensors
 
 inference_module: SceneRetrieval

@@ -22,5 +22,26 @@
                 "--furniture_pct", "0.0", "0.5", "1.0",
             ]
         },
+
+        {
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}:${workspaceFolder}/third_party/BLIP",
+                "PYTHONWARNINGS": "ignore"
+            },
+            "name": "Python Debugger: Evaluate Scene Retrieval",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/run_evaluation.py",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "args": [
+                "--config-path", "${workspaceFolder}/configs/evaluation",
+                "--config-name", "eval_scene.yaml",
+                "task.InferenceSceneRetrieval.val=['Scannet']",
+                "task.InferenceSceneRetrieval.ckpt_path=/home/xavi/CrossOver/checkpoints/model.safetensors",
+                "hydra.run.dir=.",
+                "hydra.output_subdir=null"
+            ]
+        },
     ]
 }
