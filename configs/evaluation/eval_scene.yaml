@@ -70,6 +70,7 @@ task:
     scene_modalities        : ['point', 'floorplan'] # ['rgb', 'point', 'referral', 'floorplan'] 
     # ckpt_path               : /home/xavi/CrossOver/checkpoints/model.safetensors
     ckpt_path               : /home/xavi/CrossOver/checkpoints/mmfe_global_desc/best.ckpt
+    output_csv              : outputs/evaluation_results.csv
     mmfe:
       image_size            : [256, 256]
       floorplan_img_name    : mmfe_floorplan.png    # or floor+obj.png

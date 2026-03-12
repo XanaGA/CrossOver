@@ -20,6 +20,8 @@ import os.path as osp
 import itertools
 import numpy as np
 
+import csv
+
 @EVALUATION_REGISTRY.register()
 class SceneRetrieval():
     def __init__(self, cfg) -> None:
@@ -33,6 +35,8 @@ class SceneRetrieval():
         
         self.ckpt_path = Path(task_config.ckpt_path)
         self.is_mmfe = 'mmfe' in str(self.ckpt_path).lower()
+        
+        self.output_csv = Path(task_config.get('output_csv', 'outputs/evaluation_results.csv'))
         
         self.modalities = list(task_config.scene_modalities)
         if not self.is_mmfe:
@@ -129,6 +133,9 @@ class SceneRetrieval():
         scan_data = np.array([{ 'scan_id': output_data['scan_id'], 'label' : output_data['scene_label']} for output_data in output_dict])
         unique_labels = {data['label'] for data in scan_data}
 
+        # --- NEW: Initialize a list to hold our rows for the CSV ---
+        csv_data = []
+
         for src_modality, ref_modality in self.modality_combinations:
             if src_modality == 'object' or ref_modality == 'object':
                 continue
@@ -155,6 +162,7 @@ class SceneRetrieval():
             correct_index = torch.arange(src_embed.shape[0]).unsqueeze(1).to(top_k_indices.device)
             matches = top_k_indices == correct_index   
             
+            # --- 1. Recall ---
             recall_top1 = matches[:, 0].float().mean() * 100.
             recall_top5 = matches[:, :5].any(dim=1).float().mean() * 100.
             recall_top10 = matches[:, :10].any(dim=1).float().mean() * 100.
@@ -166,12 +174,20 @@ class SceneRetrieval():
             message = f'Recall: top1 - {recall_top1:.2f}, top5 - {recall_top5:.2f}, top10 - {recall_top10:.2f}, top20 - {recall_top20:.2f}'
             self.logger.info(message)
             
-            # Temporal eval
+            # Append Recall to CSV data
+            pair_name = f"{src_modality} -> {ref_modality}"
+            csv_data.append([pair_name, 'Recall', f"{recall_top1:.2f}", "", f"{recall_top5:.2f}", f"{recall_top10:.2f}", f"{recall_top20:.2f}"])
+            
+            # --- 2. Temporal eval ---
             recall_top1, recall_top5, recall_top10 = eval_utils.evaluate_temporal_scene_matching(rank_list.cpu().numpy().tolist(), scan_data_masked, self.data_loader.dataset.get_temporal_scan_pairs())
             message = f'Temporal: top1 - {recall_top1:.2f}, top5 - {recall_top5:.2f}, top10 - {recall_top10:.2f}'
             self.logger.info(message)  
             
+            # Append Temporal to CSV data
+            csv_data.append(["", 'Temporal', f"{recall_top1:.2f}", "", f"{recall_top5:.2f}", f"{recall_top10:.2f}", ""])
+            
             if self.dataset_name == 'Scannet':
+                # --- 3. Category eval ---
                 st_recall_top1, st_recall_top5, st_recall_top10 = eval_utils.calculate_scene_label_recall(rank_list.cpu().numpy().tolist(), scan_data_masked)
                 st_recall_top1 *= 100.
                 st_recall_top5 *= 100.
@@ -180,9 +196,30 @@ class SceneRetrieval():
                 message  =  f"Category: top1 - {st_recall_top1:.2f}, top5 - {st_recall_top5:.2f}, top10 - {st_recall_top10:.2f}"
                 self.logger.info(message)     
                 
+                # Append Category to CSV data
+                csv_data.append(["", 'Category', f"{st_recall_top1:.2f}", "", f"{st_recall_top5:.2f}", f"{st_recall_top10:.2f}", ""])
+                
+                # --- 4. Intra-Category eval ---
                 ic_recall_top1, ic_recall_top3, ic_recall_top5 = eval_utils.evaluate_intra_category_scene_matching(scan_data_masked, src_embed, ref_embed, unique_labels)
                 message  =  f"Intra-Category: top1 - {ic_recall_top1:.2f}, top3 - {ic_recall_top3:.2f}, top5 - {ic_recall_top5:.2f}"
                 self.logger.info(message)  
+                
+                # Append Intra-Category to CSV data
+                csv_data.append(["", 'Intra-Category', f"{ic_recall_top1:.2f}", f"{ic_recall_top3:.2f}", f"{ic_recall_top5:.2f}", "", ""])
+
+        # --- NEW: Write the collected data to a CSV file ---
+        # You can customize this filename to include timestamps or model names if needed
+        csv_filename = self.output_csv
+        csv_filename.parent.mkdir(parents=True, exist_ok=True)
+        
+        with open(csv_filename, mode='w', newline='') as file:
+            writer = csv.writer(file)
+            # Write the header row
+            writer.writerow(['Source -> Target', 'Metric Type', 'Top 1', 'Top 3', 'Top 5', 'Top 10', 'Top 20'])
+            # Write all the data rows
+            writer.writerows(csv_data)
+            
+        self.logger.info(f"Successfully saved structured results to {csv_filename}")
                    
     def load_from_ckpt(self):
         if self.ckpt_path.exists():
