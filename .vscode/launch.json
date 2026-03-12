@@ -4,6 +4,7 @@
     // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
     "version": "0.2.0",
     "configurations": [
+        
 
         {
             "env": {
@@ -38,7 +39,8 @@
                 "--config-path", "${workspaceFolder}/configs/evaluation",
                 "--config-name", "eval_scene.yaml",
                 "task.InferenceSceneRetrieval.val=['Scannet']",
-                "task.InferenceSceneRetrieval.ckpt_path=/home/xavi/CrossOver/checkpoints/model.safetensors",
+                "task.InferenceSceneRetrieval.ckpt_path=/home/xavi/CrossOver/checkpoints/mmfe_global_desc/51611590/best.ckpt",
+                // "task.InferenceSceneRetrieval.ckpt_path=/home/xavi/CrossOver/checkpoints/model.safetensors",
                 "hydra.run.dir=.",
                 "hydra.output_subdir=null"
             ]

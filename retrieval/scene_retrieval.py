@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from safetensors.torch import load_file
 import torch
 from pathlib import Path
@@ -29,8 +31,12 @@ class SceneRetrieval():
         
         task_config = cfg.task.get(cfg.task.name)
         
-        self.modalities = task_config.scene_modalities
-        self.modalities.append('object')
+        self.ckpt_path = Path(task_config.ckpt_path)
+        self.is_mmfe = 'mmfe' in str(self.ckpt_path).lower()
+        
+        self.modalities = list(task_config.scene_modalities)
+        if not self.is_mmfe:
+            self.modalities.append('object')
         
         modality_combinations = list(itertools.combinations(self.modalities, 2))
         same_element_combinations = [(item, item) for item in self.modalities]
@@ -48,15 +54,46 @@ class SceneRetrieval():
         
         self.accelerator = Accelerator(kwargs_handlers=kwargs)
         
-        # Accelerator preparation
-        self.model = build_model(cfg)
+        if self.is_mmfe:
+            self.model = self._build_mmfe_model(cfg, task_config)
+        else:
+            self.model = build_model(cfg)
+        
         self.model, self.data_loader = self.accelerator.prepare(self.model, self.data_loader)
         
-        # Load from ckpt
-        self.ckpt_path = Path(task_config.ckpt_path)
-        self.load_from_ckpt()
+        if not self.is_mmfe:
+            self.load_from_ckpt()
     
+    def _build_mmfe_model(self, cfg, task_config):
+        import sys
+        mmfe_src = osp.abspath(osp.join(osp.dirname(__file__), '..', 'third_party', 'mmfe', 'src'))
+        if mmfe_src not in sys.path:
+            sys.path.insert(0, mmfe_src)
+
+        from global_descriptors.global_descriptor_models import load_global_descriptor_model_from_checkpoint
+        from global_descriptors.global_descriptor_modules import GlobalDescriptorLightningModule
+
+        self.logger.info(f"Loading MMFE model from {self.ckpt_path}")
+        inner_model = load_global_descriptor_model_from_checkpoint(str(self.ckpt_path))
+        lightning_module = GlobalDescriptorLightningModule(model=inner_model)
+
+        base_dir = cfg.data[self.dataset_name].base_dir
+        mmfe_config = task_config.get('mmfe', {})
+        lightning_module.setup_crossover(
+            base_dir=base_dir,
+            image_size=tuple(mmfe_config.get('image_size', [224, 224])),
+            floorplan_img_name=mmfe_config.get('floorplan_img_name', 'mmfe_floorplan.png'),
+            point_source=mmfe_config.get('point_source', 'density'),
+            density_name=mmfe_config.get('density_name', 'density.png'),
+            scene_modalities=list(task_config.scene_modalities),
+        )
+
+        self.logger.info("MMFE model configured for CrossOver evaluation")
+        return lightning_module
+
     def forward(self, data_dict):
+        if self.is_mmfe:
+            return self.model.crossover_forward(data_dict)
         return self.model(data_dict)
     
     @torch.no_grad()

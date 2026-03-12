@@ -18,7 +18,7 @@ data :
   process_dir : ${base_dir}/preprocess_feats
   
   Scannet:
-    base_dir         : /home/xavi/CrossOver/scannet_data/scannet_og
+    base_dir         : /home/xavi/CrossOver/tmp/preprocess_feats/Scannet/scans
     shape_dir        : null
     process_dir      : ${data.process_dir}/Scannet
     chunked_dir      : ${data.process_dir}/objects_chunked/Scannet
@@ -68,7 +68,13 @@ task:
     val                     : [Scannet]
     modalities              : ['rgb', 'point', 'cad', 'referral']
     scene_modalities        : ['point', 'floorplan'] # ['rgb', 'point', 'referral', 'floorplan'] 
-    ckpt_path               : /home/xavi/CrossOver/checkpoints/model.safetensors
+    # ckpt_path               : /home/xavi/CrossOver/checkpoints/model.safetensors
+    ckpt_path               : /home/xavi/CrossOver/checkpoints/mmfe_global_desc/best.ckpt
+    mmfe:
+      image_size            : [256, 256]
+      floorplan_img_name    : mmfe_floorplan.png    # or floor+obj.png
+      point_source          : density               # 'density' for pre-rendered images, 'coordinates' for on-the-fly rendering
+      density_name          : density.png            # density.png | density_large.png | density_mesh.png | density_mesh_noisy.png
 
 inference_module: SceneRetrieval
 model: 

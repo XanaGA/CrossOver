@@ -34,4 +34,7 @@ def main(cfg):
 if __name__ == "__main__":
     import torch
     torch.multiprocessing.set_start_method('spawn')# good solution !!!!
+    from dotenv import load_dotenv
+    load_dotenv()
+
     main()     
