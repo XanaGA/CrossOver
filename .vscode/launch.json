@@ -27,7 +27,8 @@
         {
             "env": {
                 "PYTHONPATH": "${workspaceFolder}:${workspaceFolder}/third_party/BLIP",
-                "PYTHONWARNINGS": "ignore"
+                "PYTHONWARNINGS": "ignore",
+                "LD_PRELOAD": "/home/xavi/miniconda3/envs/crossover/lib/libstdc++.so.6"
             },
             "name": "Python Debugger: Evaluate Scene Retrieval",
             "type": "debugpy",
@@ -40,7 +41,7 @@
                 "--config-name", "eval_scene.yaml",
                 "task.InferenceSceneRetrieval.val=['Scannet']",
                 "task.InferenceSceneRetrieval.ckpt_path=/home/xavi/CrossOver/checkpoints/mmfe_global_desc/51611590/best.ckpt",
-                // "task.InferenceSceneRetrieval.ckpt_path=/home/xavi/CrossOver/checkpoints/model.safetensors",
+                // "task.InferenceSceneRetrieval.ckpt_path=/home/xavi/CrossOver/checkpoints/all_datasets/model.safetensors",
                 "hydra.run.dir=.",
                 "hydra.output_subdir=null"
             ]

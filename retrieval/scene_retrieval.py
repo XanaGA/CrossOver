@@ -90,6 +90,8 @@ class SceneRetrieval():
             point_source=mmfe_config.get('point_source', 'density'),
             density_name=mmfe_config.get('density_name', 'density.png'),
             scene_modalities=list(task_config.scene_modalities),
+            debug_dir=mmfe_config.get('debug_dir', None),
+            point_size=mmfe_config.get('point_size', 1),
         )
 
         self.logger.info("MMFE model configured for CrossOver evaluation")

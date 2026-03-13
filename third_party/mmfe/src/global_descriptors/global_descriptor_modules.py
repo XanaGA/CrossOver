@@ -95,6 +95,8 @@ class GlobalDescriptorLightningModule(pl.LightningModule):
         point_source: str = 'density',
         density_name: str = 'density.png',
         scene_modalities=None,
+        debug_dir: Optional[str] = None,
+        point_size: int = 1,
     ):
         """Configure the model for CrossOver evaluation.
 
@@ -104,11 +106,17 @@ class GlobalDescriptorLightningModule(pl.LightningModule):
             floorplan_img_name: Filename of the floorplan image
                 (e.g. ``floor+obj.png`` or ``mmfe_floorplan.png``).
             point_source: ``'density'`` to load pre-rendered density images,
-                ``'coordinates'`` to render on-the-fly from point clouds.
+                ``'coordinates'`` to render on-the-fly from the raw coordinate
+                tensor, ``'pcl_sparse'`` to render from the
+                ``ME.SparseTensor`` already built by the dataloader.
             density_name: Filename of the density image when
                 *point_source* is ``'density'``.
             scene_modalities: List of modalities to process
                 (default ``['point', 'floorplan']``).
+            debug_dir: If set, rendered / loaded images are saved here for
+                visual inspection.
+            point_size: Brush size (in pixels) used when rendering density
+                maps on-the-fly (``'coordinates'`` / ``'pcl_sparse'``).
         """
         import torchvision.transforms as T
 
@@ -118,11 +126,33 @@ class GlobalDescriptorLightningModule(pl.LightningModule):
         self._crossover_point_source = point_source
         self._crossover_density_name = density_name
         self._crossover_modalities = scene_modalities or ['point', 'floorplan']
+        self._crossover_debug_dir = debug_dir
+        self._crossover_point_size = point_size
+        if debug_dir is not None:
+            os.makedirs(debug_dir, exist_ok=True)
         self._crossover_transform = T.Compose([
             T.Resize(self._crossover_image_size),
             T.ToTensor(),
             T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ])
+
+    def _debug_save(self, pil_img, scan_id: str, modality: str):
+        """Save a PIL image to the debug directory (if configured)."""
+        if self._crossover_debug_dir is None:
+            return
+        safe_id = scan_id.replace("/", "_")
+        out_path = os.path.join(
+            self._crossover_debug_dir, f"{safe_id}_{modality}.png",
+        )
+        pil_img.save(out_path)
+
+    def _render_points_to_pil(self, pts_np: np.ndarray):
+        """Render an (N, 3) float numpy point cloud to a PIL RGB image."""
+        from PIL import Image
+        from third_parties.CrossOver.render_utils import render_pointcloud_density
+
+        density_img = render_pointcloud_density(pts_np, point_size=self._crossover_point_size)
+        return Image.fromarray(density_img).convert('RGB')
 
     @torch.no_grad()
     def crossover_forward(self, data_dict: Dict[str, Any]) -> Dict[str, Any]:
@@ -132,6 +162,16 @@ class GlobalDescriptorLightningModule(pl.LightningModule):
         encodes them with ``self.model``, and writes the resulting
         embeddings back into *data_dict* so that the CrossOver evaluation
         pipeline can consume them.
+
+        Supports three ``point_source`` modes:
+
+        * ``'density'``      – load a pre-rendered density PNG from disk.
+        * ``'coordinates'``  – render on-the-fly from the raw ``(N, 4)``
+          coordinate tensor (col-0 = batch id, cols 1-3 = XYZ).
+        * ``'pcl_sparse'``   – render on-the-fly from the
+          ``ME.SparseTensor`` that CrossOver already builds.  Per-batch
+          coordinates are recovered via
+          ``SparseTensor.decomposed_coordinates``.
         """
         from PIL import Image
 
@@ -141,41 +181,59 @@ class GlobalDescriptorLightningModule(pl.LightningModule):
 
         data_dict['embeddings'] = {}
 
+        # ---- floorplan ------------------------------------------------
         if 'floorplan' in self._crossover_modalities:
             floorplan_images = []
             for scan_id in scan_ids:
                 img_path = os.path.join(
-                    self._crossover_base_dir, scan_id, self._crossover_floorplan_img_name,
+                    self._crossover_base_dir, scan_id,
+                    self._crossover_floorplan_img_name,
                 )
                 img = Image.open(img_path).convert('RGB')
+                self._debug_save(img, scan_id, 'floorplan')
                 floorplan_images.append(self._crossover_transform(img))
             floorplan_batch = torch.stack(floorplan_images).to(device)
             data_dict['embeddings']['floorplan'] = self.model(floorplan_batch)
 
+        # ---- point cloud ----------------------------------------------
         if 'point' in self._crossover_modalities:
-            if self._crossover_point_source == 'coordinates':
-                from third_parties.CrossOver.render_utils import render_pointcloud_density
+            if self._crossover_point_source == 'pcl_sparse':
+                pcl_sparse = data_dict['pcl_sparse']
+                per_batch_coords = pcl_sparse.decomposed_coordinates
+                point_images = []
+                for i in range(batch_size):
+                    pts = per_batch_coords[i].float().cpu().numpy()
+                    img = self._render_points_to_pil(pts)
+                    self._debug_save(img, scan_ids[i], 'point')
+                    point_images.append(self._crossover_transform(img))
+                point_batch = torch.stack(point_images).to(device)
 
+            elif self._crossover_point_source == 'coordinates':
                 coordinates = data_dict['coordinates']
                 point_images = []
                 for i in range(batch_size):
                     mask = coordinates[:, 0] == i
                     pts = coordinates[mask, 1:].float().cpu().numpy()
-                    density_img = render_pointcloud_density(pts)
-                    img = Image.fromarray(density_img).convert('RGB')
+                    img = self._render_points_to_pil(pts)
+                    self._debug_save(img, scan_ids[i], 'point')
                     point_images.append(self._crossover_transform(img))
                 point_batch = torch.stack(point_images).to(device)
-            else:
+
+            else:  # density – load pre-rendered image from disk
                 point_images = []
                 for scan_id in scan_ids:
                     img_path = os.path.join(
-                        self._crossover_base_dir, scan_id, self._crossover_density_name,
+                        self._crossover_base_dir, scan_id,
+                        self._crossover_density_name,
                     )
                     img = Image.open(img_path).convert('RGB')
+                    self._debug_save(img, scan_id, 'point')
                     point_images.append(self._crossover_transform(img))
                 point_batch = torch.stack(point_images).to(device)
+
             data_dict['embeddings']['point'] = self.model(point_batch)
 
+        # ---- masks ----------------------------------------------------
         if 'scene_masks' not in data_dict:
             data_dict['scene_masks'] = {}
         for mod in self._crossover_modalities:

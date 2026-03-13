@@ -74,8 +74,10 @@ task:
     mmfe:
       image_size            : [256, 256]
       floorplan_img_name    : mmfe_floorplan.png    # or floor+obj.png
-      point_source          : density               # 'density' for pre-rendered images, 'coordinates' for on-the-fly rendering
+      point_source          : coordinates               # 'density' | 'coordinates' | 'pcl_sparse'
       density_name          : density.png            # density.png | density_large.png | density_mesh.png | density_mesh_noisy.png
+      point_size            : 1                     # brush size (px) for on-the-fly density rendering
+      debug_dir             : null                  # set a path (e.g. /tmp/mmfe_debug) to save rendered images
 
 inference_module: SceneRetrieval
 model: 
