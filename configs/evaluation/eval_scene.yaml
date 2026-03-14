@@ -31,6 +31,7 @@ data :
     avail_modalities : ['point', 'cad', 'rgb', 'referral']
     max_object_len   : 150
     voxel_size       : 0.02
+    mesh_voxel_size  : 0.02
   
   Scan3R:
     base_dir       : /media/sayan/internal/datasets/Scan3R/
@@ -71,13 +72,14 @@ task:
     # ckpt_path               : /home/xavi/CrossOver/checkpoints/model.safetensors
     ckpt_path               : /home/xavi/CrossOver/checkpoints/mmfe_global_desc/best.ckpt
     output_csv              : outputs/evaluation_results.csv
+    pcl_sparse_source       : mesh # coordinates | mesh
     mmfe:
       image_size            : [256, 256]
       floorplan_img_name    : mmfe_floorplan.png    # or floor+obj.png
-      point_source          : coordinates               # 'density' | 'coordinates' | 'pcl_sparse'
+      point_source          : pcl_sparse               # 'density' | 'coordinates' | 'pcl_sparse'
       density_name          : density.png            # density.png | density_large.png | density_mesh.png | density_mesh_noisy.png
-      point_size            : 1                     # brush size (px) for on-the-fly density rendering
-      debug_dir             : null                  # set a path (e.g. /tmp/mmfe_debug) to save rendered images
+      point_size            : 3                     # brush size (px) for on-the-fly density rendering
+      debug_dir             : outputs/mmfe_debug                  # set a path (e.g. /tmp/mmfe_debug) to save rendered images
 
 inference_module: SceneRetrieval
 model: 

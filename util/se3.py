@@ -1,24 +1,26 @@
 """Utilities for handling SE(3) transformations, quaternions, and bounding boxes."""
 from typing import Tuple, Dict, Union, Optional
 import numpy as np
-import quaternion
+from scipy.spatial.transform import Rotation as R
 
 def convert_quat_to_rot_mat(q: np.ndarray) -> np.ndarray:
-    """Convert quaternion to rotation matrix."""
-    q = np.quaternion(q[0], q[1], q[2], q[3])
-    rot_mat = quaternion.as_rotation_matrix(q)
+    """Convert quaternion to rotation matrix. Expects q as [w, x, y, z]."""
+    # scipy expects [x, y, z, w]
+    q_scipy = np.array([q[1], q[2], q[3], q[0]])
+    rot_mat = R.from_quat(q_scipy).as_matrix()
     return rot_mat
 
 def make_M_from_tqs(t: np.ndarray, q: np.ndarray, s: np.ndarray) -> np.ndarray:
     """Create transformation matrix from translation, quaternion rotation, and scale."""
-    q = np.quaternion(q[0], q[1], q[2], q[3])
+    # scipy expects [x, y, z, w]; q is [w, x, y, z]
+    q_scipy = np.array([q[1], q[2], q[3], q[0]])
     T = np.eye(4)
     T[0:3, 3] = t
-    R = np.eye(4)
-    R[0:3, 0:3] = quaternion.as_rotation_matrix(q)
+    R_mat = np.eye(4)
+    R_mat[0:3, 0:3] = R.from_quat(q_scipy).as_matrix()
     S = np.eye(4)
     S[0:3, 0:3] = np.diag(s)
-    M = T.dot(R).dot(S)
+    M = T.dot(R_mat).dot(S)
     
     return M 
 
@@ -35,7 +37,8 @@ def calc_Mbbox(model: Dict[str, Union[Dict, np.ndarray]]) -> np.ndarray:
     center_obj = np.asarray(model["center"], dtype=np.float64)
     trans_obj = np.asarray(trs_obj["translation"], dtype=np.float64)
     rot_obj = np.asarray(trs_obj["rotation"], dtype=np.float64)
-    q_obj = np.quaternion(rot_obj[0], rot_obj[1], rot_obj[2], rot_obj[3])
+    # rot_obj is [w, x, y, z]; scipy expects [x, y, z, w]
+    q_scipy = np.array([rot_obj[1], rot_obj[2], rot_obj[3], rot_obj[0]])
     scale_obj = np.asarray(trs_obj["scale"], dtype=np.float64)
 
     tcenter1 = np.eye(4)
@@ -43,7 +46,7 @@ def calc_Mbbox(model: Dict[str, Union[Dict, np.ndarray]]) -> np.ndarray:
     trans1 = np.eye(4)
     trans1[0:3, 3] = trans_obj
     rot1 = np.eye(4)
-    rot1[0:3, 0:3] = quaternion.as_rotation_matrix(q_obj)
+    rot1[0:3, 0:3] = R.from_quat(q_scipy).as_matrix()
     scale1 = np.eye(4)
     scale1[0:3, 0:3] = np.diag(scale_obj)
     bbox1 = np.eye(4)
@@ -53,17 +56,19 @@ def calc_Mbbox(model: Dict[str, Union[Dict, np.ndarray]]) -> np.ndarray:
 
 def compose_mat4(
     t: np.ndarray, 
-    q: Union[np.ndarray, np.quaternion], 
+    q: np.ndarray, 
     s: np.ndarray, 
     center: Optional[np.ndarray] = None
 ) -> np.ndarray:
-    """Compose 4x4 transformation matrix from translation, rotation, scale, and optional center."""
-    if not isinstance(q, np.quaternion):
-        q = np.quaternion(q[0], q[1], q[2], q[3])
+    """Compose 4x4 transformation matrix from translation, rotation, scale, and optional center.
+    Expects q as [w, x, y, z]."""
+    q = np.asarray(q)
+    # scipy expects [x, y, z, w]; q is [w, x, y, z]
+    q_scipy = np.array([q[1], q[2], q[3], q[0]])
     T = np.eye(4)
     T[0:3, 3] = t
-    R = np.eye(4)
-    R[0:3, 0:3] = quaternion.as_rotation_matrix(q)
+    R_mat = np.eye(4)
+    R_mat[0:3, 0:3] = R.from_quat(q_scipy).as_matrix()
     S = np.eye(4)
     S[0:3, 0:3] = np.diag(s)
 
@@ -71,23 +76,26 @@ def compose_mat4(
     if center is not None:
         C[0:3, 3] = center
 
-    M = T.dot(R).dot(S).dot(C)
+    M = T.dot(R_mat).dot(S).dot(C)
     return M 
 
-def decompose_mat4(M: np.ndarray) -> Tuple[np.ndarray, np.quaternion, np.ndarray]:
-    """Decompose 4x4 transformation matrix into translation, quaternion rotation, and scale."""
-    R = M[0:3, 0:3].copy()
-    sx = np.linalg.norm(R[0:3, 0])
-    sy = np.linalg.norm(R[0:3, 1])
-    sz = np.linalg.norm(R[0:3, 2])
+def decompose_mat4(M: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Decompose 4x4 transformation matrix into translation, quaternion rotation, and scale.
+    Returns q as [w, x, y, z] to match the old quaternion library behavior."""
+    R_mat = M[0:3, 0:3].copy()
+    sx = np.linalg.norm(R_mat[0:3, 0])
+    sy = np.linalg.norm(R_mat[0:3, 1])
+    sz = np.linalg.norm(R_mat[0:3, 2])
 
     s = np.array([sx, sy, sz])
 
-    R[:,0] /= sx
-    R[:,1] /= sy
-    R[:,2] /= sz
+    R_mat[:, 0] /= sx
+    R_mat[:, 1] /= sy
+    R_mat[:, 2] /= sz
 
-    q = quaternion.from_rotation_matrix(R[0:3, 0:3])
+    q_obj = R.from_matrix(R_mat[:3, :3])
+    q_raw = q_obj.as_quat()  # scipy returns [x, y, z, w]
+    q = np.array([q_raw[3], q_raw[0], q_raw[1], q_raw[2]])  # [w, x, y, z]
 
     t = M[0:3, 3]
     return t, q, s

@@ -4,6 +4,7 @@ import os.path as osp
 from glob import glob
 import csv
 import open3d as o3d
+import trimesh
 from typing import Tuple, Dict, List, Union
 from plyfile import PlyData
 
@@ -49,6 +50,30 @@ def read_mesh_vertices_rgb(filename: str) -> np.ndarray:
         vertices[:,3] = plydata['vertex'].data['red']
         vertices[:,4] = plydata['vertex'].data['green']
         vertices[:,5] = plydata['vertex'].data['blue']
+    return vertices
+
+def read_mesh_vertices_rgb_mmfe(filename: str, num_samples: int = 50000) -> np.ndarray:
+    """Sample points from mesh surface with interpolated RGB colors.
+    Note: RGB values are in 0-255
+    """
+    assert osp.isfile(filename)
+    mesh = trimesh.load(filename, process=False)
+
+    num_samples = min(num_samples, len(mesh.vertices))
+    points, face_indices = mesh.sample(num_samples, return_index=True)
+
+    faces = mesh.faces[face_indices]
+    if hasattr(mesh.visual, 'vertex_colors') and mesh.visual.vertex_colors is not None:
+        vertex_colors = np.array(mesh.visual.vertex_colors[:, :3], dtype=np.float32)
+    else:
+        vertex_colors = np.full((len(mesh.vertices), 3), 128.0, dtype=np.float32)
+
+    face_vertex_colors = vertex_colors[faces]
+    sampled_colors = face_vertex_colors.mean(axis=1)
+
+    vertices = np.zeros(shape=[num_samples, 6], dtype=np.float32)
+    vertices[:, :3] = points
+    vertices[:, 3:6] = sampled_colors
     return vertices
 
 def read_aggregation(filename: str) -> Tuple[Dict[int, List[int]], Dict[str, List[int]]]:

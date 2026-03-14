@@ -15,6 +15,8 @@ from model.build import build_model
 from .build import EVALUATION_REGISTRY
 from evaluator import eval_utils
 from common import misc
+from common.load_utils import load_yaml
+from util import scannet as scannet_utils
 
 import os.path as osp
 import itertools
@@ -51,6 +53,17 @@ class SceneRetrieval():
         self.data_loader = build_dataloader(cfg, split=key, is_training=False)
         self.dataset_name = misc.rgetattr(task_config, key)[0]
         
+        self.pcl_sparse_source = task_config.get('pcl_sparse_source', 'coordinates')
+        if self.pcl_sparse_source == 'mesh':
+            import albumentations as A
+            data_cfg = cfg.data[self.dataset_name]
+            self._mesh_base_dir = data_cfg.base_dir
+            self._mesh_voxel_size = data_cfg.mesh_voxel_size
+            color_mean_std = load_yaml(osp.join(data_cfg.process_dir, 'color_mean_std.yaml'))
+            self._mesh_normalize_color = A.Normalize(
+                mean=tuple(color_mean_std["mean"]),
+                std=tuple(color_mean_std["std"]),
+            )
         
         ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
         init_kwargs = InitProcessGroupKwargs(timeout=timedelta(seconds=5400))
@@ -97,6 +110,43 @@ class SceneRetrieval():
         self.logger.info("MMFE model configured for CrossOver evaluation")
         return lightning_module
 
+    def _build_pcl_sparse_from_mesh(self, data_dict):
+        """Build an ME.SparseTensor by loading mesh PLY files per scan."""
+        scan_ids = data_dict['scan_id']
+        all_coords = []
+        all_feats = []
+
+        for scan_id in scan_ids:
+            mesh_file = osp.join(self._mesh_base_dir, scan_id, 'floor+obj.ply')
+            # mesh_vertices = scannet_utils.read_mesh_vertices_rgb(mesh_file)
+            mesh_vertices = scannet_utils.read_mesh_vertices_rgb_mmfe(mesh_file, num_samples=len(data_dict['coordinates']))
+
+            points = mesh_vertices[:, 0:3]
+            # Undo the -90° Z rotation baked into floor+obj.ply by makeShapeAndLayoutMesh
+            points = np.column_stack([-points[:, 1], points[:, 0], points[:, 2]])
+            feats = mesh_vertices[:, 3:]
+            pseudo_image = feats.astype(np.uint8)[np.newaxis, :, :]
+            feats = np.squeeze(
+                self._mesh_normalize_color(image=pseudo_image)["image"]
+            )
+
+            _, sel = ME.utils.sparse_quantize(
+                points / self._mesh_voxel_size, return_index=True,
+            )
+            coords = np.floor(points[sel] / self._mesh_voxel_size)
+            coords -= coords.min(0)
+            feats = feats[sel]
+
+            all_coords.append(coords)
+            all_feats.append(feats)
+
+        coords, feats = ME.utils.sparse_collate(all_coords, all_feats)
+        return ME.SparseTensor(
+            coordinates=coords,
+            features=feats.to(torch.float32),
+            device=self.accelerator.device,
+        )
+
     def forward(self, data_dict):
         if self.is_mmfe:
             return self.model.crossover_forward(data_dict)
@@ -112,10 +162,13 @@ class SceneRetrieval():
         
         outputs = []
         for iter, data_dict in enumerate(loader):
-            data_dict['pcl_sparse'] = ME.SparseTensor(
-                    coordinates=data_dict['coordinates'],
-                    features=data_dict['features'].to(torch.float32),
-                    device=self.accelerator.device)
+            if self.pcl_sparse_source == 'mesh':
+                data_dict['pcl_sparse'] = self._build_pcl_sparse_from_mesh(data_dict)
+            else:
+                data_dict['pcl_sparse'] = ME.SparseTensor(
+                        coordinates=data_dict['coordinates'],
+                        features=data_dict['features'].to(torch.float32),
+                        device=self.accelerator.device)
             
             data_dict = self.forward(data_dict)
             
