@@ -50,8 +50,20 @@ class SceneRetrieval():
         self.modality_combinations = modality_combinations
                 
         key = "val"
-        self.data_loader = build_dataloader(cfg, split=key, is_training=False)
         self.dataset_name = misc.rgetattr(task_config, key)[0]
+        
+        ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+        init_kwargs = InitProcessGroupKwargs(timeout=timedelta(seconds=5400))
+        kwargs = ([ddp_kwargs] if cfg.num_gpu > 1 else []) + [init_kwargs]
+        
+        self.accelerator = Accelerator(kwargs_handlers=kwargs)
+        
+        if self.is_mmfe:
+            self.model = self._build_mmfe_model(cfg, task_config)
+        else:
+            self.model = build_model(cfg)
+        
+        self.data_loader = build_dataloader(cfg, split=key, is_training=False)
         
         self.pcl_sparse_source = task_config.get('pcl_sparse_source', 'coordinates')
         if self.pcl_sparse_source == 'mesh':
@@ -64,17 +76,6 @@ class SceneRetrieval():
                 mean=tuple(color_mean_std["mean"]),
                 std=tuple(color_mean_std["std"]),
             )
-        
-        ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
-        init_kwargs = InitProcessGroupKwargs(timeout=timedelta(seconds=5400))
-        kwargs = ([ddp_kwargs] if cfg.num_gpu > 1 else []) + [init_kwargs]
-        
-        self.accelerator = Accelerator(kwargs_handlers=kwargs)
-        
-        if self.is_mmfe:
-            self.model = self._build_mmfe_model(cfg, task_config)
-        else:
-            self.model = build_model(cfg)
         
         self.model, self.data_loader = self.accelerator.prepare(self.model, self.data_loader)
         
@@ -96,9 +97,20 @@ class SceneRetrieval():
 
         base_dir = cfg.data[self.dataset_name].base_dir
         mmfe_config = task_config.get('mmfe', {})
+        image_size = list(mmfe_config.get('image_size', [224, 224]))
+
+        cc = inner_model.creation_config
+        backbone_name = cc["backbone"]["name"] if cc and "backbone" in cc else ""
+        if "dinov2" in backbone_name:
+            image_size = [s // 14 * 14 for s in image_size]
+            self.logger.info(
+                f"DINOv2 backbone detected — image_size adjusted to {image_size} "
+                f"(nearest multiple of 14)"
+            )
+
         lightning_module.setup_crossover(
             base_dir=base_dir,
-            image_size=tuple(mmfe_config.get('image_size', [224, 224])),
+            image_size=tuple(image_size),
             floorplan_img_name=mmfe_config.get('floorplan_img_name', 'mmfe_floorplan.png'),
             point_source=mmfe_config.get('point_source', 'density'),
             density_name=mmfe_config.get('density_name', 'density.png'),
