@@ -365,7 +365,7 @@ def create_global_descriptor_model(cfg: DictConfig, load_weights: bool = True) -
 
                 mmfe_to_salad_adapter = nn.Sequential(
                                         nn.Conv2d(
-                                            in_channels=32,     # mmfe feature channels
+                                            in_channels=backbone_model.backbone.model.encoder.projection_dim,     # mmfe feature channels
                                             out_channels=768,   # what SALAD expects
                                             kernel_size=1,      # preserve H,W
                                             stride=1,
